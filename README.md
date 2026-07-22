@@ -6,88 +6,129 @@
 
 **The AI Assistant for Scientific Research**
 
-*Forge new discoveries with the power of AI.*
+*Turn general-purpose AI agents into a domain-tuned scientific co-pilot.*
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-early--development-orange.svg)]()
+[![Built on](https://img.shields.io/badge/built%20on-Claude%20%7C%20Codex%20%7C%20...-8A2BE2.svg)]()
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)]()
 
 </div>
 
 ---
 
-## 🔭 Overview
+## 🔭 What is SciForge?
 
-**SciForge** is an AI-powered assistant designed to accelerate every stage of the scientific research workflow. From literature discovery to hypothesis generation, from experimental design to data analysis, and from figure creation to manuscript writing — SciForge aims to be the researcher's most trusted co-pilot.
+**SciForge is *not* another standalone AI agent.**
 
-Whether you are a graduate student wrestling with your first paper, a principal investigator managing multiple projects, or a data scientist exploring new domains, SciForge helps you spend less time on tedious plumbing and more time on the ideas that matter.
+It is a curated collection of **skills, prompts, workflows, tools, and configuration** that turns general-purpose coding/reasoning agents — such as **Claude Code**, **OpenAI Codex CLI**, **Cursor**, **Aider**, and similar — into a specialized assistant for **scientific research**.
 
-## ✨ Key Features
+If a general agent is a sharp but generic knife, SciForge is the whetstone, jig, and cookbook that shape it into a research-grade instrument: one that knows how to read papers, run analyses, draft figures, and write manuscripts *the way scientists actually work*.
 
-- 📚 **Literature Intelligence** — Search, summarize, and synthesize papers across arXiv, PubMed, Semantic Scholar, and more.
-- 🧪 **Hypothesis Generation** — Suggest novel research questions grounded in existing literature and your own notes.
-- 📊 **Data Analysis** — Load, clean, analyze, and visualize experimental data through natural language.
-- 📈 **Figure Creation** — Generate publication-quality figures with sensible defaults for scientific plots.
-- ✍️ **Manuscript Drafting** — Assist with writing abstracts, methods, results, and discussion sections in the tone of your field.
-- 🔍 **Citation & Reference Management** — Track sources, format citations, and manage BibTeX libraries automatically.
-- 🧠 **Long-Term Memory** — Remembers your projects, preferences, and prior conversations across sessions.
-- 🔬 **Reproducibility First** — Every analysis is scripted, versioned, and reproducible.
+## 🧩 How It Works
+
+SciForge layers on top of the agent host you already use:
+
+```
+┌───────────────────────────────────────────────────────────┐
+│                      Your Research Task                   │
+├───────────────────────────────────────────────────────────┤
+│   SciForge  ──  skills · prompts · workflows · tools      │
+├───────────────────────────────────────────────────────────┤
+│   Host Agent  ──  Claude Code · Codex · Cursor · Aider    │
+├───────────────────────────────────────────────────────────┤
+│                Foundation Model (LLM API)                 │
+└───────────────────────────────────────────────────────────┘
+```
+
+- **Skills** — reusable, invokable capabilities (e.g. "read this arXiv paper", "draft a methods section", "generate a Nature-style figure").
+- **Prompts & Personas** — carefully-crafted system prompts for common research roles (reviewer, methods writer, statistician, ...).
+- **Workflows** — multi-step recipes that chain skills together (literature review → hypothesis → experiment plan → analysis → figures → draft).
+- **Tools / MCP servers** — thin wrappers over arXiv, PubMed, Semantic Scholar, Zotero, matplotlib, LaTeX, etc.
+- **Config presets** — drop-in `.claude/`, `AGENTS.md`, or equivalent files so your host agent picks the right defaults immediately.
+
+## ✨ What You Get
+
+- 📚 **Literature Intelligence** — search, summarize, and synthesize across arXiv, PubMed, Semantic Scholar.
+- 🧪 **Hypothesis & Experiment Design** — turn open questions into concrete, testable plans grounded in prior work.
+- 📊 **Data Analysis** — load, clean, analyze, and visualize experimental data through natural language.
+- 📈 **Publication-Quality Figures** — sensible defaults for scientific plots; consistent style across a manuscript.
+- ✍️ **Manuscript Drafting** — abstracts, methods, results, discussion — in the voice and structure of your field.
+- 🔍 **Citation & Reference Management** — BibTeX-first, Zotero-friendly, citation-style-aware.
+- 🔬 **Reproducibility First** — every analysis is scripted, versioned, and re-runnable.
 
 ## 🚀 Getting Started
 
-> ⚠️ **Note:** SciForge is in early development. The instructions below are placeholders and will be updated as the project matures.
+> ⚠️ **Early development.** Interfaces are still shifting — expect breaking changes.
 
-### Prerequisites
+### 1. Pick your host agent
 
-- Python 3.10+
-- An API key for a supported LLM provider (Anthropic Claude, OpenAI, etc.)
+SciForge is designed to work with any capable coding agent. First-class targets:
 
-### Installation
+- [Claude Code](https://docs.claude.com/en/docs/claude-code) (recommended)
+- [OpenAI Codex CLI](https://github.com/openai/codex)
+- [Cursor](https://cursor.sh) / [Aider](https://aider.chat) / others via generic `AGENTS.md`
+
+### 2. Install SciForge
 
 ```bash
-git clone https://github.com/<your-org>/SciForge.git
+git clone https://github.com/sylcliff/SciForge.git
 cd SciForge
-pip install -e .
 ```
 
-### Quick Start
+### 3. Wire it into your agent
+
+For **Claude Code**:
 
 ```bash
-sciforge chat
+# Copy (or symlink) SciForge's skills and settings into your project
+cp -r sciforge/.claude /path/to/your/research/project/
 ```
 
-Or in Python:
+For **Codex / Cursor / Aider**:
 
-```python
-from sciforge import Assistant
-
-agent = Assistant()
-agent.ask("Summarize the latest papers on protein language models.")
+```bash
+cp sciforge/AGENTS.md /path/to/your/research/project/
 ```
+
+Then just talk to your agent as usual — SciForge's skills and workflows will be discoverable.
+
+### 4. Try a workflow
+
+Ask your agent:
+
+> "Use SciForge to do a literature review on protein language models from the last 12 months and draft a related-work section."
 
 ## 🗺️ Roadmap
 
-- [ ] Core conversational agent
-- [ ] Literature search & summarization
-- [ ] PDF ingestion & Q&A
-- [ ] Jupyter notebook integration
-- [ ] Data analysis workbench
-- [ ] Figure generation toolkit
-- [ ] Manuscript writing assistant
-- [ ] LaTeX / Overleaf export
-- [ ] Web UI
+- [ ] Core skill pack (literature, analysis, figures, writing)
+- [ ] Claude Code integration (`.claude/skills/`, hooks, subagents)
+- [ ] Codex CLI integration (`AGENTS.md` preset)
+- [ ] Cursor / Aider presets
+- [ ] MCP server for arXiv / PubMed / Semantic Scholar
+- [ ] MCP server for Zotero / BibTeX
+- [ ] Figure toolkit (matplotlib themes, plotly presets, TikZ helpers)
+- [ ] LaTeX / Overleaf export workflow
+- [ ] Reproducibility bundle exporter
 
 ## 🤝 Contributing
 
-Contributions of all kinds are welcome — bug reports, feature requests, documentation, and code. Please open an issue to discuss significant changes before submitting a pull request.
+SciForge is a community project. Contributions of every kind are welcome:
+
+- 🐛 Bug reports & feature requests via Issues
+- 📝 New skills, prompts, or workflows
+- 🔌 Adapters for additional host agents
+- 📚 Docs, examples, and case studies
+
+Please open an issue to discuss significant changes before submitting a PR.
 
 ## 📄 License
 
-This project is released under the MIT License. See [LICENSE](LICENSE) for details.
+Released under the MIT License. See [LICENSE](LICENSE) for details.
 
 ## 💬 Acknowledgements
 
-SciForge is built with love for the scientific community. It stands on the shoulders of many open-source giants — thank you to everyone whose work makes it possible.
+SciForge stands on the shoulders of the agent hosts and open-source scientific tools it composes — Claude Code, Codex, arXiv, matplotlib, LaTeX, and many more. Thank you to everyone whose work makes it possible.
 
 ---
 
