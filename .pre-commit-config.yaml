@@ -1,0 +1,11 @@
+repos:
+  - repo: local
+    hooks:
+      - id: check-skills-validate
+        name: Check-Skills Skill规范校验
+        entry: npx check-skills validate skills --recursive
+        args: ["--strict"]
+        language: system
+        # 只对 SKILL.md 文件触发校验
+        files: 'SKILL\.md$'
+        pass_filenames: false

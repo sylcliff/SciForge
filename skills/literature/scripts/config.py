@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+
+"""Config resolution for SciForge literature skill.
+
+Resolution order (first match wins):
+  1. $SCIFORGE_CONFIG env var
+  2. ./.sciforge.toml (walk up to git root)
+  3. $XDG_CONFIG_HOME/sciforge/config.toml (or ~/.config/sciforge/config.toml)
+  4. Built-in defaults
+
+Usage:
+  python3 config.py           # print effective config path
+  python3 config.py get <key> # get one value, e.g. "library.path"
+  python3 config.py show      # print effective config as TOML
+"""
+
+import os
+import sys
+from pathlib import Path
+
+DEFAULT_CONFIG = {
+    "library": {"path": "./library"},
+    "citekey": {"style": "authoryearword", "on_collision": "suffix"},
+    "sources": {
+        # Each source is an object with `enabled` + source-specific options.
+        # (Flat bools would collide with sub-dicts in TOML.)
+        "arxiv": {"enabled": True, "throttle_seconds": 3},
+        "crossref": {"enabled": True},
+        "semantic_scholar": {"enabled": True, "api_key_env": "S2_API_KEY"},
+        "github": {
+            "enabled": True,
+            "token_env": "GITHUB_TOKEN",
+            "readme_summary_chars": 800,
+        },
+        "news": {"enabled": True, "max_results": 5, "recency_days": 365},
+    },
+    "pdf": {"pdftotext_bin": "pdftotext", "use_pdfinfo": True},
+    "cache": {
+        "arxiv": 168,
+        "crossref": 168,
+        "s2": 168,
+        "github": 24,
+        "news": 72,
+    },
+    "export": {
+        "bibtex": {
+            "fields": ["title", "author", "year", "journal", "booktitle", "doi", "url", "eprint"],
+            "include_file_field": True,
+        }
+    },
+    "ui": {"rich": True},
+}
+
+
+def _find_git_root(path: Path) -> Path | None:
+    """Walk up from path looking for a .git directory."""
+    for parent in [path] + list(path.parents):
+        if (parent / ".git").is_dir():
+            return parent
+    return None
+
+
+def _find_config() -> Path | None:
+    """Find the first existing config file."""
+    # 1. env var
+    env_path = os.environ.get("SCIFORGE_CONFIG")
+    if env_path:
+        p = Path(env_path).expanduser().resolve()
+        if p.is_file():
+            return p
+        return p  # return the path even if it doesn't exist yet
+
+    # 2. cwd / git root
+    cwd = Path.cwd().resolve()
+    for candidate in [cwd] + list(cwd.parents):
+        if (candidate / ".sciforge.toml").is_file():
+            return candidate / ".sciforge.toml"
+        if (candidate / ".git").is_dir():
+            break
+
+    # 3. xdg config
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        p = Path(xdg) / "sciforge" / "config.toml"
+    else:
+        p = Path.home() / ".config" / "sciforge" / "config.toml"
+    if p.is_file():
+        return p
+    return p  # even if not yet created, return the path
+
+
+def _merge_toml_into_defaults(overrides: dict) -> dict:
+    """Deep-merge user TOML overrides into DEFAULT_CONFIG."""
+    result = {}
+    for key, default_val in DEFAULT_CONFIG.items():
+        if key in overrides:
+            if isinstance(default_val, dict):
+                merged = dict(default_val)
+                for k, v in overrides[key].items():
+                    merged[k] = v
+                result[key] = merged
+            else:
+                result[key] = overrides[key]
+        else:
+            result[key] = default_val
+    for key in overrides:
+        if key not in result:
+            result[key] = overrides[key]
+    return result
+
+
+def load_config() -> dict:
+    """Load and merge config from file + defaults. Returns dict."""
+    config_path = _find_config()
+    if config_path and config_path.is_file():
+        try:
+            import tomllib  # Python 3.11+
+        except ImportError:
+            import tomli as tomllib  # type: ignore[no-redef]
+        with open(config_path, "rb") as f:
+            user_config = tomllib.load(f)
+        merged = _merge_toml_into_defaults(user_config)
+    else:
+        merged = dict(DEFAULT_CONFIG)
+
+    # resolve library path
+    lib_path = merged.get("library", {}).get("path", "./library")
+    merged["_library_path"] = str(Path(lib_path).expanduser().resolve())
+    merged["_config_path"] = str(config_path) if config_path else "(defaults)"
+    return merged
+
+
+def load_config_path() -> str:
+    """Return the config file path or '(defaults)'."""
+    c = _find_config()
+    if c and c.is_file():
+        return str(c)
+    return str(c) if c else "(defaults)"
+
+
+def get_config_value(key: str) -> str | None:
+    """Get a dot-separated config value, e.g. 'library.path'."""
+    config = load_config()
+    parts = key.replace("_library_path", "library.path").split(".")
+    val = config
+    for p in parts:
+        if isinstance(val, dict):
+            val = val.get(p)
+        else:
+            return None
+    if val is None:
+        return None
+    return str(val)
+
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    if not args:
+        print(load_config_path())
+    elif args[0] == "get" and len(args) >= 2:
+        val = get_config_value(args[1])
+        if val is None:
+            sys.exit(1)
+        print(val)
+    elif args[0] == "show":
+        import tomllib as tml
+        cfg = load_config()
+        # Remove internal keys
+        show = {k: v for k, v in cfg.items() if not k.startswith("_")}
+        # crude TOML print
+        for section, vals in show.items():
+            print(f"[{section}]")
+            if isinstance(vals, dict):
+                for k, v in vals.items():
+                    if isinstance(v, dict):
+                        print(f"[{section}.{k}]")
+                        for sk, sv in v.items():
+                            print(f"{sk} = {repr(sv)}")
+                    else:
+                        print(f"{k} = {repr(v)}")
+            else:
+                print(f"    {vals}")
+            print()
+    else:
+        print(load_config_path())
