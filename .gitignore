@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Library data (regenerated per user; not committed)
+library/
+/skills/literature/library/
+
+# Local editor
+.vscode/
+.idea/
+*.swp
