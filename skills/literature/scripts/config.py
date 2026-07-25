@@ -25,6 +25,22 @@ from pathlib import Path
 DEFAULT_CONFIG = {
     "library": {"path": "./library"},
     "citekey": {"style": "authoryearword", "on_collision": "suffix"},
+    # PDF → Markdown converter binaries. `default` picks which one runs
+    # when `convert` / `add --and-convert` aren't given `--converter`.
+    # Commands can be overridden via env vars for conda/docker setups.
+    "converter": {
+        "default": "mineru",
+        "mineru": {
+            "command": "mineru",
+            "env": "LITLIB_MINERU_BIN",
+            "extra_args": [],
+        },
+        "docling": {
+            "command": "docling",
+            "env": "LITLIB_DOCLING_BIN",
+            "extra_args": [],
+        },
+    },
     "sources": {
         # Each source is an object with `enabled` + source-specific options.
         # (Flat bools would collide with sub-dicts in TOML.)
@@ -155,6 +171,48 @@ def get_config_value(key: str) -> str | None:
     if val is None:
         return None
     return str(val)
+
+
+def get_converter_command(converter: str) -> list[str] | None:
+    """Resolve the CLI command for a converter (``mineru`` / ``docling``).
+
+    Returns a list suitable for passing as the head of ``subprocess.run``'s
+    argv, or ``None`` if the converter is not configured. Env var override
+    (``LITLIB_MINERU_BIN`` / ``LITLIB_DOCLING_BIN``) wins over the config
+    file's ``command`` value.
+    """
+    cfg = load_config()
+    section = cfg.get("converter", {}).get(converter)
+    if not isinstance(section, dict):
+        return None
+    env_var = section.get("env")
+    cmd_str: str | None = None
+    if env_var:
+        cmd_str = os.environ.get(env_var)
+    if not cmd_str:
+        cmd_str = section.get("command")
+    if not cmd_str:
+        return None
+    # Split env-var strings so a user can set LITLIB_MINERU_BIN="python -m
+    # magic_pdf" for a venv-embedded launch. Use POSIX splitting on POSIX
+    # and cmd-style on Windows so backslashes in path literals survive.
+    import shlex
+    argv = shlex.split(cmd_str, posix=(os.name != "nt"))
+    # On Windows, shlex.split with posix=False keeps surrounding quotes on
+    # tokens; strip a single leading/trailing quote pair to make the argv
+    # directly usable by subprocess.run.
+    if os.name == "nt":
+        argv = [a[1:-1] if len(a) >= 2 and a[0] == a[-1] == '"' else a for a in argv]
+    extra = section.get("extra_args") or []
+    if isinstance(extra, list):
+        argv.extend(str(x) for x in extra)
+    return argv
+
+
+def default_converter() -> str:
+    """Return the configured default converter name."""
+    cfg = load_config()
+    return str(cfg.get("converter", {}).get("default") or "mineru")
 
 
 if __name__ == "__main__":

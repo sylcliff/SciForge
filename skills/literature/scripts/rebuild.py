@@ -4,11 +4,12 @@
 # dependencies = []
 # ///
 
-"""`litlib rebuild-db` — regenerate index.db from sidecar metadata.json.
+"""`litlib rebuild-db` — regenerate index.db from disk state.
 
 The `library/papers/<citekey>/metadata.json` files are the canonical
-source of truth. This verb walks them, drops the tables, and re-inserts
-everything.
+source for the metadata catalog. If a paper also has `paper.md` +
+`converter.json` on disk, its `papers_md` row and FTS index are
+rebuilt too — the catalog and MD store come back in one pass.
 
 Citekey stability: if the sidecar carries a `citekey` field, we honor
 it verbatim — never regenerate. Missing citekey → derived from
@@ -16,7 +17,6 @@ directory name.
 """
 
 import json
-import shutil
 import sys
 from pathlib import Path
 
@@ -94,13 +94,56 @@ def _apply_relations(citekey: str, meta: dict):
         )
 
 
-def _insert_paper(meta: dict):
+def _normalize_md(raw: bytes) -> str:
+    """UTF-8 + strip BOM + CRLF → LF (mirrors convert.py's ingest)."""
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
+    text = raw.decode("utf-8", errors="replace")
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _ingest_md_if_present(citekey: str, paper_dir: Path) -> str:
+    """If paper.md + converter.json exist, restore papers_md + md_status.
+
+    Returns the effective md_status for the paper.
+    """
+    top = paper_dir / "paper.md"
+    sidecar_p = paper_dir / "converter.json"
+    if not top.is_file() or top.stat().st_size == 0:
+        return "absent"
+    sidecar: dict = {}
+    if sidecar_p.is_file():
+        try:
+            sidecar = json.loads(sidecar_p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            sidecar = {}
+    converter = sidecar.get("converter") or "unknown"
+    text = _normalize_md(top.read_bytes())
+    dbmod.execute(
+        """
+        INSERT INTO papers_md (citekey, markdown, converter, converter_version,
+                                converted_at, pdf_sha256, char_count)
+        VALUES (?, ?, ?, ?, coalesce(?, datetime('now')), ?, ?)
+        """,
+        (
+            citekey, text, converter,
+            sidecar.get("converter_version"),
+            sidecar.get("converted_at"),
+            sidecar.get("pdf_sha256"),
+            len(text),
+        ),
+    )
+    return "ready"
+
+
+def _insert_paper(meta: dict, paper_dir: Path):
     citekey = meta["citekey"]
     dbmod.execute(
         """
         INSERT INTO papers (citekey, title, abstract, year, venue, venue_full,
-                            doi, arxiv_id, s2_paper_id, url, pdf_path, notes_path, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            doi, arxiv_id, s2_paper_id, url, pdf_path, notes_path,
+                            source, md_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sidecar', 'absent')
         """,
         (
             citekey,
@@ -115,25 +158,18 @@ def _insert_paper(meta: dict):
             meta.get("url"),
             meta.get("pdf_path"),
             meta.get("notes_path"),
-            "sidecar",
         ),
     )
     _write_authors(citekey, meta.get("authors") or [])
-    authors_flat = " ".join(str(a) for a in (meta.get("authors") or []))
-    dbmod.execute(
-        "UPDATE papers_fts SET authors_flat = ? WHERE citekey = ?",
-        (authors_flat, citekey),
-    )
     _apply_relations(citekey, meta)
-    # Refresh tags_flat for FTS
-    current = [
-        r["name"] for r in dbmod.fetchall(
-            "SELECT t.name FROM paper_tags pt JOIN tags t ON t.id = pt.tag_id "
-            "WHERE pt.citekey = ? AND t.kind = 'tag' ORDER BY t.name", (citekey,))
-    ]
-    if current:
-        dbmod.execute("UPDATE papers_fts SET tags_flat = ? WHERE citekey = ?",
-                      (" ".join(current), citekey))
+
+    # If paper.md exists on disk, restore the MD side too.
+    effective = _ingest_md_if_present(citekey, paper_dir)
+    if effective == "ready":
+        dbmod.execute(
+            "UPDATE papers SET md_status = 'ready' WHERE citekey = ?",
+            (citekey,),
+        )
 
 
 def run(args) -> int:
@@ -164,6 +200,7 @@ def run(args) -> int:
     try:
         errors: list[tuple[Path, str]] = []
         loaded = 0
+        md_loaded = 0
         for sc in sidecars:
             try:
                 data = json.loads(sc.read_text())
@@ -172,7 +209,6 @@ def run(args) -> int:
                 continue
             citekey = data.get("citekey") or sc.parent.name
             data["citekey"] = citekey
-            # Fill in file paths if the on-disk file exists but sidecar omits them.
             paper_pdf = sc.parent / "paper.pdf"
             if paper_pdf.exists() and not data.get("pdf_path"):
                 data["pdf_path"] = str(paper_pdf.relative_to(lib))
@@ -181,11 +217,13 @@ def run(args) -> int:
                 data["notes_path"] = str(notes_md.relative_to(lib))
             try:
                 with dbmod.Atomic():
-                    _insert_paper(data)
+                    _insert_paper(data, sc.parent)
                 loaded += 1
+                if (sc.parent / "paper.md").is_file():
+                    md_loaded += 1
             except Exception as e:  # noqa: BLE001
                 errors.append((sc, str(e)))
-        print(f"rebuilt: {loaded} papers, {len(errors)} errors")
+        print(f"rebuilt: {loaded} papers ({md_loaded} with paper.md), {len(errors)} errors")
         for sc, err in errors:
             print(f"  ! {sc}: {err}", file=sys.stderr)
         return 0 if not errors else 1

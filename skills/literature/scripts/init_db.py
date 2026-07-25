@@ -4,10 +4,22 @@
 # dependencies = []
 # ///
 
-"""Initialize / bootstrap the literature library.
+"""Initialize / bootstrap the literature library (schema v2, MD-first).
 
 Creates the directory tree, SQLite DB with schema, and writes an
 effective-config snapshot.
+
+Schema v2 changes vs v1:
+  - Old ``papers_fts`` (title/abstract/authors_flat/venue) is gone; the
+    catalog side is now WHERE-only, and full-text search runs against
+    Markdown rendered from each paper's PDF.
+  - New ``papers_md(citekey, markdown, converter, converter_version,
+    converted_at, char_count)`` — one row per paper that has a MD copy.
+  - New ``papers_md_fts`` FTS5 virtual table over ``papers_md.markdown``,
+    tokenizer ``porter unicode61 remove_diacritics 2``, kept in sync by
+    triggers.
+  - ``papers`` gains ``md_status`` (``absent`` / ``ready`` / ``failed`` /
+    ``stale``) and ``md_last_error``.
 
 Usage:
   init_db.py [--path <library dir>] [--force]
@@ -25,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import config  # noqa: E402
 import db as dbmod  # noqa: E402
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
@@ -51,11 +63,14 @@ CREATE TABLE IF NOT EXISTS papers (
     added_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
     source        TEXT,
-    notes_path    TEXT
+    notes_path    TEXT,
+    md_status     TEXT NOT NULL DEFAULT 'absent',
+    md_last_error TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_papers_year  ON papers(year);
-CREATE INDEX IF NOT EXISTS idx_papers_venue ON papers(venue);
+CREATE INDEX IF NOT EXISTS idx_papers_year      ON papers(year);
+CREATE INDEX IF NOT EXISTS idx_papers_venue     ON papers(venue);
+CREATE INDEX IF NOT EXISTS idx_papers_md_status ON papers(md_status);
 
 CREATE TABLE IF NOT EXISTS authors (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,27 +144,45 @@ CREATE TABLE IF NOT EXISTS citations (
     cited_citekey  TEXT
 );
 
-CREATE VIRTUAL TABLE IF NOT EXISTS papers_fts USING fts5(
-    citekey UNINDEXED,
-    title, abstract, authors_flat, venue, year_str, tags_flat,
-    tokenize='porter unicode61'
+-- ---- MD content store & FTS ----------------------------------------
+--
+-- One row per paper whose canonical `paper.md` has been ingested.
+-- `content='papers_md'` makes the FTS a "contentless external content"
+-- table; the sync triggers below own it.
+
+CREATE TABLE IF NOT EXISTS papers_md (
+    citekey           TEXT PRIMARY KEY REFERENCES papers(citekey) ON DELETE CASCADE,
+    markdown          TEXT NOT NULL,
+    converter         TEXT NOT NULL,
+    converter_version TEXT,
+    converted_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    pdf_sha256        TEXT,
+    char_count        INTEGER
 );
 
--- FTS synchronization triggers.
--- Insert / delete on papers keep an FTS row per citekey.
-CREATE TRIGGER IF NOT EXISTS papers_ai AFTER INSERT ON papers BEGIN
-    INSERT INTO papers_fts(citekey, title, abstract, authors_flat, venue, year_str, tags_flat)
-    VALUES (new.citekey, new.title, coalesce(new.abstract, ''), '', coalesce(new.venue, ''), coalesce(cast(new.year as TEXT), ''), '');
+CREATE VIRTUAL TABLE IF NOT EXISTS papers_md_fts USING fts5(
+    markdown,
+    content='papers_md',
+    content_rowid='rowid',
+    tokenize='porter unicode61 remove_diacritics 2'
+);
+
+-- Insert / delete / update triggers to keep FTS in sync with papers_md.
+-- Uses the FTS5 external-content pattern: INSERT into papers_md_fts
+-- with rowid=new.rowid re-indexes; DELETE removes the row.
+CREATE TRIGGER IF NOT EXISTS papers_md_ai AFTER INSERT ON papers_md BEGIN
+    INSERT INTO papers_md_fts(rowid, markdown) VALUES (new.rowid, new.markdown);
 END;
 
-CREATE TRIGGER IF NOT EXISTS papers_ad AFTER DELETE ON papers BEGIN
-    DELETE FROM papers_fts WHERE citekey = old.citekey;
+CREATE TRIGGER IF NOT EXISTS papers_md_ad AFTER DELETE ON papers_md BEGIN
+    INSERT INTO papers_md_fts(papers_md_fts, rowid, markdown)
+        VALUES ('delete', old.rowid, old.markdown);
 END;
 
-CREATE TRIGGER IF NOT EXISTS papers_au AFTER UPDATE ON papers BEGIN
-    DELETE FROM papers_fts WHERE citekey = old.citekey;
-    INSERT INTO papers_fts(citekey, title, abstract, authors_flat, venue, year_str, tags_flat)
-    VALUES (new.citekey, new.title, coalesce(new.abstract, ''), '', coalesce(new.venue, ''), coalesce(cast(new.year as TEXT), ''), '');
+CREATE TRIGGER IF NOT EXISTS papers_md_au AFTER UPDATE ON papers_md BEGIN
+    INSERT INTO papers_md_fts(papers_md_fts, rowid, markdown)
+        VALUES ('delete', old.rowid, old.markdown);
+    INSERT INTO papers_md_fts(rowid, markdown) VALUES (new.rowid, new.markdown);
 END;
 """
 

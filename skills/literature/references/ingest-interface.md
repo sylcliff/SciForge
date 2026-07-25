@@ -3,7 +3,22 @@
 This is the contract between companion skills and `literature`. Any
 external skill that fetches metadata (arXiv, DOI, GitHub, news, …)
 should emit JSON conforming to this schema and pipe it into
-`litlib add --meta-json -`.
+`litlib add --meta-json -`. Companion skills are expected to hand off
+**three products**:
+
+1. A **metadata JSON** matching the schema below.
+2. A **local PDF path** (non-zero-byte file). Optional only when the
+   caller has explicitly declared "no PDF" via CLI-mode `--manual`.
+3. A **citekey suggestion** (optional; precompute via
+   `litlib citekey --author X --year Y --title Z`).
+
+`add` is strictly the **catalog** step. It never triggers MinerU or
+Docling. A freshly-added paper has ``md_status='absent'``. Full-text
+search is enabled by a separate `litlib convert <citekey>` call. The
+companion contract does **not** require the companion to run
+conversion — that is a `literature` responsibility once the paper is
+catalogued. Pass `--and-convert` to `add` when you want the two steps
+in one command.
 
 ## Top-level object
 
@@ -80,11 +95,18 @@ should emit JSON conforming to this schema and pipe it into
   subdirectory. `si.url` stores the original source URL for provenance.
   At least one of `path` or `url` is required.
 
+## SI is not converted
+
+Supplementary information attached via `add-si` or the `si` list in the
+metadata blob is stored as-is. It does **not** run through
+MinerU/Docling and is **not** part of `paper.md` / `papers_md_fts`. If
+you want an SI PDF to be searchable, add it as a separate paper.
+
 ## Versioning
 
 This schema is versioned with the library's `schema_version` in `meta`.
-Bumping the schema version implies the interface may have changed and
-companion skills should be updated.
+The current schema is v2. Bumping the schema version implies the
+interface may have changed and companion skills should be updated.
 
 ## Example minimal entry
 

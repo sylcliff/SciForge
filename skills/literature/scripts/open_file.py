@@ -17,6 +17,7 @@ so the caller can decide what to do.
 
 Targets:
   pdf     — the main paper.pdf
+  md      — the canonical paper.md (produced by `litlib convert`)
   notes   — notes.md
   si      — SI directory (or si:N for the Nth SI file)
   github  — first associated repo URL
@@ -104,6 +105,17 @@ def run(args) -> int:
                 print(f"error: {paper['citekey']} has no PDF", file=sys.stderr)
                 return 1
             return _open_target(str(lib / paper["pdf_path"]))
+
+        if target == "md":
+            md_path = lib / "papers" / paper["citekey"] / "paper.md"
+            if not md_path.is_file():
+                print(
+                    f"error: {paper['citekey']} has no paper.md — "
+                    f"run `litlib convert {paper['citekey']}`",
+                    file=sys.stderr,
+                )
+                return 1
+            return _open_target(str(md_path))
 
         if target == "notes":
             if not paper.get("notes_path"):

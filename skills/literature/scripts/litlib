@@ -4,11 +4,12 @@
 # dependencies = []
 # ///
 
-"""litlib — CLI dispatcher for the SciForge literature skill (v2).
+"""litlib — CLI dispatcher for the SciForge literature skill (v2, MD-first).
 
 Scope: local library data management only. External data (arXiv, DOI,
 GitHub, news) is the job of companion skills that hand pre-assembled
-metadata to `litlib add`.
+metadata to `litlib add`. PDF→Markdown conversion runs against
+user-installed MinerU or Docling; `litlib` shells out.
 
 Verbs:
 
@@ -17,10 +18,17 @@ Verbs:
   litlib config [path|show|get <key>]
   litlib citekey [--author X --year Y --title Z --arxiv-id A --doi D]
 
-  litlib add --meta-json PATH|- [--pdf-path P --move-pdf --upsert]
+  litlib add --meta-json PATH|- [--pdf-path P --move-pdf --upsert
+                                  --and-convert --converter mineru|docling]
   litlib add --title "..." [--author ... --year N --venue V --abstract A
              --doi D --arxiv-id X --s2-id S --url U --tag T --collection C
-             --notes N --pdf-path P --move-pdf --manual --upsert]
+             --notes N --pdf-path P --move-pdf --manual --upsert
+             --and-convert --converter mineru|docling]
+
+  litlib convert <key> [--converter mineru|docling --reconvert --force
+                         --converted-dir DIR]
+  litlib status  <key> [--json]
+  litlib list    [--md-status absent|ready|failed|stale] [--json]
 
   litlib add-si     <key> [--path P] [--url U] [--label L]
   litlib add-github <key> --owner O --repo R [--url U --stars N --release T
@@ -33,14 +41,15 @@ Verbs:
   litlib note       <key> [--open | --append TXT | --set-from FILE]
 
   litlib search [<query>] [--tag T --collection C --year Y|Y-Y --author A
-                           --has-pdf --json --limit N]
-  litlib show <key> [--json --refs --news --github]
+                           --has-pdf --has-md --json --limit N]
+  litlib read   <key>   [--section S | --pages P | --kind K | --grep RE] [--json]
+  litlib show   <key>   [--json --refs --news --github]
 
   litlib export <selector> --format bibtex|json [--out F --include-file]
-  litlib open   <key> [pdf|notes|si|si:N|github|url]
+  litlib open   <key> [pdf|md|notes|si|si:N|github|url]
   litlib rebuild-db
 
-External-data verbs from v1 have been removed:
+External-data verbs remain out of scope:
   - `add --id <arxiv|doi>` — call arxiv-fetch / doi-fetch instead
   - `update --news/--github/--refs/--metadata` — call the corresponding
     fetch skills, then re-ingest via `add --upsert`
@@ -178,6 +187,24 @@ def cmd_search(args):   _dispatch("search",      "M3", args)
 def cmd_export(args):   _dispatch("export_lib",  "M6", args)
 def cmd_open(args):     _dispatch("open_file",   "M6", args)
 def cmd_rebuild(args):  _dispatch("rebuild",     "M6", args)
+def cmd_convert(args):  _dispatch("convert",     "M7", args)
+def cmd_read(args):     _dispatch("read",        "M7", args)
+
+
+def cmd_status(args):
+    m = _lazy("status")
+    if m is None:
+        print("error: status.py not implemented", file=sys.stderr)
+        sys.exit(64)
+    sys.exit(m.cmd_status(args))
+
+
+def cmd_list(args):
+    m = _lazy("status")
+    if m is None:
+        print("error: status.py not implemented", file=sys.stderr)
+        sys.exit(64)
+    sys.exit(m.cmd_list(args))
 
 
 def cmd_associate(args):
@@ -246,6 +273,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp_add.add_argument("--move-pdf", dest="move_pdf", action="store_true")
     sp_add.add_argument("--manual", action="store_true", help="Explicit placeholder entry")
     sp_add.add_argument("--upsert", action="store_true", help="Merge if a matching paper exists")
+    sp_add.add_argument(
+        "--and-convert", dest="and_convert", action="store_true",
+        help="Run `litlib convert` immediately after ingest (two-phase sugar)",
+    )
+    sp_add.add_argument(
+        "--converter", choices=["mineru", "docling"], default=None,
+        help="With --and-convert: pick the converter (defaults to config)",
+    )
     sp_add.set_defaults(func=cmd_add)
 
     # associate verbs — routed to associate.py
@@ -294,16 +329,17 @@ def build_parser() -> argparse.ArgumentParser:
     grp2.add_argument("--append")
     grp2.add_argument("--set-from", dest="set_from")
 
-    # search / show
-    sp_search = sub.add_parser("search", help="Search the local library")
+    # search / show / read / status / list
+    sp_search = sub.add_parser("search", help="Search the local library (paper-level FTS)")
     sp_search.add_argument("query", nargs="?", default="")
     sp_search.add_argument("--tag", action="append", default=[])
     sp_search.add_argument("--collection", action="append", default=[])
     sp_search.add_argument("--year")
     sp_search.add_argument("--author")
-    sp_search.add_argument("--has-pdf", action="store_true")
+    sp_search.add_argument("--has-pdf", dest="has_pdf", action="store_true")
+    sp_search.add_argument("--has-md", dest="has_md", action="store_true")
     sp_search.add_argument("--json", action="store_true")
-    sp_search.add_argument("--limit", type=int, default=50)
+    sp_search.add_argument("--limit", type=int, default=20)
     sp_search.set_defaults(func=cmd_search)
 
     sp_show = sub.add_parser("show", help="Show a paper")
@@ -313,6 +349,38 @@ def build_parser() -> argparse.ArgumentParser:
     sp_show.add_argument("--news", action="store_true")
     sp_show.add_argument("--github", action="store_true")
     sp_show.set_defaults(func=cmd_show)
+
+    sp_read = sub.add_parser("read", help="Read canonical paper.md (whole or sliced)")
+    sp_read.add_argument("key")
+    sp_read.add_argument("--section", help="Fuzzy heading match; returns matching sections")
+    sp_read.add_argument("--pages", help="Page spec (MinerU only): 3, 3-5, or 3,7,9-11")
+    sp_read.add_argument("--kind",
+                         help="Block kind (MinerU only): table|equation|image_caption|code|text")
+    sp_read.add_argument("--grep", help="Python regex over paper.md; returns matching lines")
+    sp_read.add_argument("--json", action="store_true")
+    sp_read.set_defaults(func=cmd_read)
+
+    sp_conv = sub.add_parser("convert", help="Render PDF → Markdown (MinerU/Docling)")
+    sp_conv.add_argument("key")
+    sp_conv.add_argument("--converter", choices=["mineru", "docling"], default=None)
+    sp_conv.add_argument("--reconvert", action="store_true",
+                         help="Re-run even if md_status is already 'ready'")
+    sp_conv.add_argument("--force", action="store_true",
+                         help="With --reconvert, bypass sha256+converter+version fuse")
+    sp_conv.add_argument("--converted-dir", dest="converted_dir",
+                         help="Skip the converter; copy an existing output tree instead")
+    sp_conv.set_defaults(func=cmd_convert)
+
+    sp_stat = sub.add_parser("status", help="Show a paper's MD conversion state")
+    sp_stat.add_argument("key")
+    sp_stat.add_argument("--json", action="store_true")
+    sp_stat.set_defaults(func=cmd_status)
+
+    sp_ls = sub.add_parser("list", help="List papers, optionally filtered by MD status")
+    sp_ls.add_argument("--md-status", dest="md_status", default=None,
+                       choices=["absent", "ready", "failed", "stale"])
+    sp_ls.add_argument("--json", action="store_true")
+    sp_ls.set_defaults(func=cmd_list)
 
     # export / open / rebuild-db
     sp_exp = sub.add_parser("export", help="Export citations")
@@ -326,9 +394,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp_exp.add_argument("--include-file", action="store_true", dest="include_file")
     sp_exp.set_defaults(func=cmd_export)
 
-    sp_open = sub.add_parser("open", help="Open a paper's PDF / notes / SI / repo")
+    sp_open = sub.add_parser("open", help="Open a paper's PDF / MD / notes / SI / repo")
     sp_open.add_argument("key")
-    sp_open.add_argument("target", nargs="?", default="pdf")
+    sp_open.add_argument("target", nargs="?", default="pdf",
+                         help="pdf | md | notes | si | si:N | github | url")
     sp_open.set_defaults(func=cmd_open)
 
     sp_rb = sub.add_parser("rebuild-db", help="Rebuild index.db from sidecar metadata.json")

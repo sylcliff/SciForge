@@ -19,6 +19,12 @@ to hand this skill fully-assembled metadata via one of four entrypoints:
 All four routes normalize to a single dict, then flow through
 `_write_paper_files` + `_insert_paper`.
 
+`add` is strictly the **catalog** step: it never runs PDF→Markdown
+conversion. A freshly-added paper's ``md_status`` is ``absent`` — call
+``litlib convert <citekey>`` to render its ``paper.md`` and make it
+searchable. Pass ``--and-convert`` on ``add`` for the two-step
+convenience shortcut.
+
 Exit codes:
   0  success
   2  duplicate (arxiv_id/doi/citekey already in library); pass --upsert to merge
@@ -234,15 +240,20 @@ def _write_paper_files(lib: Path, citekey: str, meta: dict, pdf_src: Path | None
 
 
 def _insert_paper(citekey: str, meta: dict, source: str):
-    """Insert into papers + authors + paper_authors within one transaction."""
+    """Insert into papers + authors + paper_authors within one transaction.
+
+    New rows land with ``md_status='absent'`` — a call to
+    ``litlib convert`` is required to render `paper.md` and enable
+    full-text search on the body.
+    """
     authors = meta.get("authors") or []
     with dbmod.Atomic():
         dbmod.execute(
             """
             INSERT INTO papers (citekey, title, abstract, year, venue, venue_full,
                                 doi, arxiv_id, s2_paper_id, url, pdf_path,
-                                notes_path, source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                notes_path, source, md_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'absent')
             """,
             (
                 citekey,
@@ -261,11 +272,6 @@ def _insert_paper(citekey: str, meta: dict, source: str):
             ),
         )
         _write_authors(citekey, authors)
-        # Populate FTS authors_flat (the papers_ai trigger seeded it empty).
-        dbmod.execute(
-            "UPDATE papers_fts SET authors_flat = ? WHERE citekey = ?",
-            (" ".join(authors), citekey),
-        )
 
 
 def _write_authors(citekey: str, authors: list[str]):
@@ -298,7 +304,7 @@ def _write_authors(citekey: str, authors: list[str]):
 
 
 def _apply_tags(citekey: str, tags: list[str], kind: str = "tag"):
-    """Idempotent tag/collection linkage + FTS resync."""
+    """Idempotent tag/collection linkage."""
     if not tags:
         return
     with dbmod.Atomic():
@@ -316,19 +322,6 @@ def _apply_tags(citekey: str, tags: list[str], kind: str = "tag"):
                     "INSERT OR IGNORE INTO paper_tags (citekey, tag_id) VALUES (?, ?)",
                     (citekey, row["id"]),
                 )
-        # Refresh tags_flat for FTS
-        current = [
-            r["name"]
-            for r in dbmod.fetchall(
-                "SELECT t.name FROM paper_tags pt JOIN tags t ON t.id = pt.tag_id "
-                "WHERE pt.citekey = ? AND t.kind = 'tag' ORDER BY t.name",
-                (citekey,),
-            )
-        ]
-        dbmod.execute(
-            "UPDATE papers_fts SET tags_flat = ? WHERE citekey = ?",
-            (" ".join(current), citekey),
-        )
 
 
 def _write_associations(citekey: str, meta: dict):
@@ -458,10 +451,6 @@ def _upsert_paper(citekey: str, existing_row: dict, meta: dict, source: str):
         )
         if merged.get("authors"):
             _write_authors(citekey, merged["authors"])
-            dbmod.execute(
-                "UPDATE papers_fts SET authors_flat = ? WHERE citekey = ?",
-                (" ".join(merged["authors"]), citekey),
-            )
 
 
 # ---- Entry points -----------------------------------------------------
@@ -568,6 +557,9 @@ def _do_add(meta: dict, args, lib: Path, source: str) -> int:
     else:
         print("pdf=(not provided)")
     print(f"notes={lib / meta_written['notes_path']}")
+    print("md_status=absent")
+    if meta_written.get("pdf_path"):
+        print(f"hint=run `litlib convert {citekey}` to enable full-text search")
     return 0
 
 
@@ -576,6 +568,7 @@ def run(args) -> int:
     lib = Path(cfg["_library_path"])
     _ensure_library(lib)
     dbmod.connect(lib / "index.db")
+    added_citekey: str | None = None
     try:
         # Which entrypoint?
         if args.meta_json:
@@ -595,9 +588,58 @@ def run(args) -> int:
             )
             return 1
 
-        return _do_add(meta, args, lib, source=source)
+        # Capture the resolved citekey so `--and-convert` can hand it off.
+        # We defer conversion until after the DB connection is closed so
+        # `convert` can open the DB itself without contention.
+        rc = _do_add(meta, args, lib, source=source)
+        if rc == 0 and getattr(args, "and_convert", False):
+            # `_do_add` printed citekey=<key> as its first line.
+            # Re-derive from meta the same way to avoid re-parsing stdout.
+            existing = _find_existing_by_identifier(meta) if not args.upsert else None
+            if meta.get("citekey"):
+                added_citekey = meta["citekey"]
+            elif existing:
+                added_citekey = existing
+            else:
+                # Regenerate; matches `_do_add`'s logic.
+                authors = meta.get("authors") or ["Anon"]
+                base = ids_mod.make_citekey(authors[0], meta.get("year"), meta.get("title", ""))
+                added_citekey = ids_mod.suffix_for_collision(base, _all_citekeys() - {base})
+                # If suffix_for_collision moved us but the row landed under
+                # the original base, fall back to a fresh DB lookup.
+                if not dbmod.fetchone(
+                    "SELECT 1 FROM papers WHERE citekey = ?", (added_citekey,)
+                ):
+                    row = dbmod.fetchone(
+                        "SELECT citekey FROM papers ORDER BY added_at DESC LIMIT 1"
+                    )
+                    if row:
+                        added_citekey = row["citekey"]
+        return rc
     finally:
         dbmod.close()
+        # Only spawn `convert` after the DB is closed and we know an add
+        # actually succeeded. Any errors here are surfaced to the user
+        # but don't undo the catalog insert.
+        if added_citekey:
+            _spawn_convert(added_citekey, args)
+
+
+def _spawn_convert(citekey: str, args) -> None:
+    """Run ``litlib convert <citekey>`` as a subprocess (for --and-convert)."""
+    import subprocess
+    here = Path(__file__).parent
+    argv = [sys.executable, str(here / "litlib"), "convert", citekey]
+    if getattr(args, "converter", None):
+        argv.extend(["--converter", args.converter])
+    print(f"and-convert: running `litlib convert {citekey}`", file=sys.stderr)
+    proc = subprocess.run(argv)
+    if proc.returncode != 0:
+        print(
+            f"and-convert: convert exited {proc.returncode} — "
+            f"catalog entry is fine, retry with `litlib convert {citekey} --reconvert`",
+            file=sys.stderr,
+        )
 
 
 if __name__ == "__main__":
@@ -622,4 +664,12 @@ if __name__ == "__main__":
     ap.add_argument("--move-pdf", dest="move_pdf", action="store_true")
     ap.add_argument("--manual", action="store_true", help="Explicit manual/placeholder entry")
     ap.add_argument("--upsert", action="store_true")
+    ap.add_argument(
+        "--and-convert", dest="and_convert", action="store_true",
+        help="Run `litlib convert` immediately after ingest (two-phase sugar)",
+    )
+    ap.add_argument(
+        "--converter", choices=["mineru", "docling"], default=None,
+        help="With --and-convert: pick the converter (defaults to config)",
+    )
     sys.exit(run(ap.parse_args()))

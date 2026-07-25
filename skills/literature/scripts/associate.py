@@ -51,16 +51,6 @@ def cmd_tag(key: str, tag: str, remove: bool):
             row = dbmod.fetchone("SELECT id FROM tags WHERE name = ? AND kind = 'tag'", (tag,))
             if row:
                 dbmod.execute("INSERT OR IGNORE INTO paper_tags (citekey, tag_id) VALUES (?, ?)", (ck, row["id"]))
-        # Refresh FTS tags_flat (in either branch)
-        current = [
-            r["name"]
-            for r in dbmod.fetchall(
-                "SELECT t.name FROM paper_tags pt JOIN tags t ON t.id = pt.tag_id "
-                "WHERE pt.citekey = ? AND t.kind = 'tag' ORDER BY t.name",
-                (ck,),
-            )
-        ]
-        dbmod.execute("UPDATE papers_fts SET tags_flat = ? WHERE citekey = ?", (" ".join(current), ck))
     if remove:
         print(f"removed tag {tag!r} from {ck}")
     else:

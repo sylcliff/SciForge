@@ -127,6 +127,21 @@ def _run(args, lib: Path) -> int:
             out["pdf_abs_path"] = str(lib / paper["pdf_path"])
         if paper.get("notes_path"):
             out["notes_abs_path"] = str(lib / paper["notes_path"])
+        # MD status enrichment
+        md_row = dbmod.fetchone(
+            "SELECT converter, converter_version, char_count FROM papers_md "
+            "WHERE citekey = ?", (citekey,)
+        )
+        if md_row:
+            out["md"] = {
+                "status": paper.get("md_status"),
+                "converter": md_row["converter"],
+                "converter_version": md_row["converter_version"],
+                "char_count": md_row["char_count"],
+                "path": str(lib / "papers" / citekey / "paper.md"),
+            }
+        else:
+            out["md"] = {"status": paper.get("md_status") or "absent"}
         print(json.dumps(out, indent=2, default=str))
         return 0
 
@@ -156,6 +171,24 @@ def _run(args, lib: Path) -> int:
         print(f"**pdf:** `{lib / paper['pdf_path']}`")
     if paper.get("notes_path"):
         print(f"**notes:** `{lib / paper['notes_path']}`")
+
+    # MD status one-liner.
+    md_status = paper.get("md_status") or "absent"
+    md_row = dbmod.fetchone(
+        "SELECT converter, converter_version FROM papers_md WHERE citekey = ?",
+        (citekey,),
+    )
+    if md_status == "ready" and md_row:
+        v = f" {md_row['converter_version']}" if md_row["converter_version"] else ""
+        print(f"**md:** ready ({md_row['converter']}{v})")
+    elif md_status == "failed":
+        err = paper.get("md_last_error") or "unknown error"
+        print(f"**md:** failed — {err}")
+    elif md_status == "stale":
+        note = paper.get("md_last_error") or "PDF changed"
+        print(f"**md:** stale ({note})")
+    else:
+        print("**md:** absent (run `litlib convert`)")
 
     if paper.get("abstract"):
         print()

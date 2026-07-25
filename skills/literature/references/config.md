@@ -22,6 +22,22 @@ path = "./library"                  # cwd-relative or absolute; "~" expanded
 style = "authoryearword"            # authoryearword | authoryear | arxiv | doi-slug
 on_collision = "suffix"             # suffix (_a, _b, ...) | error
 
+# PDF → Markdown converter binaries (used by `litlib convert` and
+# `litlib add --and-convert`). MinerU / Docling are invoked as CLI
+# subprocesses; install them separately (`pipx install mineru`, etc.).
+[converter]
+default = "mineru"                  # picked when `--converter` is omitted
+
+[converter.mineru]
+command = "mineru"                  # anything shlex/subprocess can exec
+env     = "LITLIB_MINERU_BIN"       # env var override; wins over `command`
+extra_args = []                     # appended to every invocation
+
+[converter.docling]
+command = "docling"
+env     = "LITLIB_DOCLING_BIN"
+extra_args = []
+
 [sources.arxiv]
 enabled = true
 throttle_seconds = 3
@@ -62,12 +78,32 @@ include_file_field = true
 rich = true
 ```
 
+## Converter env-var overrides
+
+Both converter env vars (`LITLIB_MINERU_BIN`, `LITLIB_DOCLING_BIN`)
+accept a full command string, not just a path. This is how you run
+MinerU from a conda env or Docker without editing config:
+
+```bash
+# Conda env
+export LITLIB_MINERU_BIN="/home/you/miniconda3/envs/mineru/bin/mineru"
+
+# `python -m …` launch
+export LITLIB_MINERU_BIN="python -m magic_pdf"
+
+# Docker wrapper
+export LITLIB_MINERU_BIN="docker run --rm -v /tmp:/tmp mineru-image mineru"
+```
+
+`litlib doctor` reports the resolved command for each converter.
+
 ## Inspecting the effective config
 
 ```bash
 scripts/litlib config path          # print the file being read
 scripts/litlib config show          # dump the effective config
 scripts/litlib config get library.path
+scripts/litlib config get converter.default
 ```
 
 ## Suggested global config
@@ -78,13 +114,16 @@ across all projects:
 ```toml
 [library]
 path = "~/.sciforge/library"
+
+[converter]
+default = "mineru"
 ```
 
 ## `.gitignore` for the library
 
-The DB, cache, and PDF files are large and regenerable. Sidecar JSON
-and `notes.md` are text and diff nicely. In a project that commits the
-library, use:
+The DB, cache, converter outputs, and PDF files are large and
+regenerable. Sidecar JSON and `notes.md` are text and diff nicely. In a
+project that commits the library, use:
 
 ```gitignore
 library/index.db
@@ -92,5 +131,12 @@ library/index.db-wal
 library/index.db-shm
 library/cache/
 library/papers/*/paper.pdf
+library/papers/*/paper.md
+library/papers/*/converter_output/
 library/papers/*/si/
 ```
+
+Keeping `paper.md` out of git is deliberate: it's derived from the PDF
+via a specific converter version, and `metadata.json` +
+`converter.json` on disk together let `rebuild-db` restore it (or
+`convert --reconvert` re-render it).

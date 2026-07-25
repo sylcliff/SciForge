@@ -153,11 +153,18 @@ def _select_papers(args) -> list[dict]:
         params.append(c)
 
     if args.query:
-        # reuse search.py's FTS sanitizer for consistency
+        # Route --query through the same paper-level FTS as `search`.
+        # Any word tokenizable to alnum joins with AND; phrases stay
+        # implicit (`export` is not the right place for advanced query
+        # syntax — `search` is).
         tokens = re.findall(r"[A-Za-z0-9]+", args.query)
         if tokens:
             fts = " AND ".join(tokens)
-            where.append("citekey IN (SELECT citekey FROM papers_fts WHERE papers_fts MATCH ?)")
+            where.append(
+                "citekey IN (SELECT papers_md.citekey FROM papers_md_fts "
+                "JOIN papers_md ON papers_md.rowid = papers_md_fts.rowid "
+                "WHERE papers_md_fts MATCH ?)"
+            )
             params.append(fts)
 
     if not where and not args.all_:
