@@ -33,23 +33,42 @@ PDFs) or `sf-lit add` (catalog without PDFs).
 | OpenAlex REST | polite mailto (recommended) | Cross-disciplinary + citation counts |
 | Semantic Scholar Graph API | API key (recommended) | Citation counts, field-of-study filters |
 
-**Ranking**: Reciprocal Rank Fusion (RRF) over each source's own
+**Ranking**: Reciprocal Rank Fusion (RRF, k=60) over each source's own
 relevance rank; `--sort` overrides to `year:desc` or `citations:desc`.
 
-**Dedup**: union-find on `(doi, pmid, arxiv_id, s2_hash)` — any shared
-identifier merges two records. Title-based fuzzy matching is
-deliberately **not** done.
+**Dedup**: union-find on `(doi, pmid, pmcid, arxiv_id, openalex_id,
+s2_id)` — any shared identifier merges two records. Title-based fuzzy
+matching is deliberately **not** done.
 
-**arXiv preprint ↔ journal upgrade** (post-dedup): search results
-that end up in an arxiv-only group (only `arxiv_id`, no DOI/PMID) get
-their published-version DOI looked up concurrently on OpenAlex + S2;
-if found, the DOI is injected and dedup re-runs, merging the arxiv
-preprint with its journal record. The final record is tagged
-`arxiv_upgraded: true`. Disable with `--no-arxiv-upgrade` if you don't
-want the extra HTTP calls (~2-4 s for 60-paper searches with many
-arxiv-only hits). Path A (extracting arxiv-id cross-refs from OpenAlex
-`locations` and Crossref `relation.has-preprint`) always runs — it
-adds no HTTP cost.
+**arXiv preprint ↔ journal upgrade** happens in three tiers:
+
+- **Path A (zero HTTP)** — always on. Adapters mine cross-refs from
+  OpenAlex `locations[*].landing_page_url` / `open_access.oa_url`,
+  Crossref `relation.has-preprint` / `is-preprint-of`, and arXiv
+  `<arxiv:doi>` / `<arxiv:journal_ref>` / `<arxiv:comment>` (scanned
+  for embedded DOIs). Whatever preprint↔journal pairs exist in these
+  fields get β-deduped for free.
+- **Path B (post-dedup lookup)** — on by default; disable with
+  `--no-arxiv-upgrade`. For groups that are still arxiv-only after
+  β dedup, concurrent OpenAlex + Semantic Scholar lookup by arxiv id.
+  OpenAlex uses a **two-hop query** (preprint DOI → title →
+  `type:article`) because OpenAlex represents preprint and journal as
+  two separate work IDs. DataCite arxiv self-DOIs (`10.48550/arxiv.*`)
+  are explicitly rejected as "journal DOIs". First real journal DOI
+  wins; dedup then re-runs so preprint and journal records merge.
+- **Path C (optional)** — `--arxiv-upgrade-fallback title-search`.
+  When Path B fails, query Crossref by the preprint's title; accept
+  only when title Jaccard ≥ 0.85 AND first-author surname matches.
+
+**Post-hoc verification** — after any upgrade returns a DOI, that DOI
+is cross-checked against Crossref (`/works/{doi}`) for year (±3
+tolerance) + first-author surname agreement. A mismatch drops the
+upgrade; a network flake keeps it (fail-open). This catches
+plausible-looking but wrong DOIs before injection.
+
+The upgrade sources do **not** enter `sources_hit` — they only inject
+a DOI. Final records instead carry `arxiv_upgraded: true` and
+`arxiv_upgrade_via: "id-lookup" | "title-search"` for audit.
 
 **Metadata merge (higher priority wins per field)**:
 - `title`, `abstract`: Crossref → OpenAlex → PubMed → S2 → arXiv
@@ -57,7 +76,8 @@ adds no HTTP cost.
 - `journal`, `volume`: Crossref → OpenAlex → PubMed
 - `year`: earliest non-empty
 - `citation_count`: `max(S2, OpenAlex)`
-- `identifiers`, `sources_hit`: union
+- `is_oa`: OpenAlex authoritative; `null` when no OpenAlex hit
+- `identifiers` (incl. `pmcid`), `sources_hit`: union
 
 Missing credentials degrade gracefully — no `polite_email` still hits
 Crossref / PubMed / OpenAlex (unpolite pool), no `s2_api_key` runs S2
@@ -130,22 +150,28 @@ for the full schema):
 ```jsonc
 {
   "index": 0,
-  "identifier": "10.1038/s41586-020-2649-2",   // best available ID (DOI > PMID > arxiv_id > s2_hash)
+  "identifier": "10.1038/s41586-020-2649-2",   // best available ID (DOI > PMID > pmcid > arxiv_id > openalex_id > s2_id)
   "sources_hit": ["crossref", "openalex", "pubmed"],
   "score": 0.048,                              // RRF (or year / citations when --sort overrides)
   "rank_by_source": {"crossref": 1, "openalex": 2, "pubmed": 3},
-  "dedup_group": ["10.1038/s41586-020-2649-2", "32939066"],
+  "dedup_group": ["10.1038/s41586-020-2649-2", "32939066", "PMC7480694"],
+  "arxiv_upgraded": false,                     // true iff DOI came from arxiv-upgrade lookup
+  // "arxiv_upgrade_via": "id-lookup" | "title-search"   // only present when arxiv_upgraded=true
   "meta": {
     "title": "Array programming with NumPy",
     "authors": ["Charles R. Harris", "..."],
     "year": 2020,
     "doi": "10.1038/s41586-020-2649-2",
     "pmid": "32939066",
+    "pmcid": "PMC7480694",
     "arxiv_id": null,
+    "openalex_id": "W3082521543",
+    "s2_id": null,
     "url": "https://www.nature.com/articles/s41586-020-2649-2",
     "journal": "Nature",
     "abstract": "...",
-    "citation_count": 4211
+    "citation_count": 4211,
+    "is_oa": true                              // OpenAlex authoritative; null if no OA hit
   }
 }
 ```
