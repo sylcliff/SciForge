@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""sf-me — entry point.
+
+Domain skill: the researcher's self-profile. Owns
+``sciforge://me/self``. See SKILL.md for design and contract.
+
+Subcommands (v1):
+  init [--force]      Create ~/.sciforge/me/me.md with commented examples.
+  show [id] [--json]  Print the profile (human table, or ADR-0006 JSON).
+  edit                Open me.md in $EDITOR.
+
+Exit codes follow the SciForge minimum contract (ADR-0006):
+  0 ok · 2 bad input · 3 not found · 4 destructive refused
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+SKILL_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(SKILL_ROOT))
+
+# Subcommand modules imported lazily inside main() to keep import
+# errors localised to the command the user actually invoked.
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="sf-me",
+        description="SciForge — the researcher's self-profile.",
+    )
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    init = sub.add_parser("init", help="create me.md with commented examples")
+    init.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite an existing me.md (destructive per ADR-0004)",
+    )
+
+    show = sub.add_parser("show", help="print the profile")
+    show.add_argument(
+        "id",
+        nargs="?",
+        default="self",
+        help="entity id — only 'self' is valid",
+    )
+    show.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="emit ADR-0006 JSON instead of the human table",
+    )
+
+    sub.add_parser("edit", help="open me.md in $EDITOR")
+
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    if args.cmd == "init":
+        from init_me import cmd_init
+
+        return cmd_init(force=args.force)
+
+    if args.cmd == "show":
+        from show import cmd_show
+
+        return cmd_show(entity_id=args.id, as_json=args.as_json)
+
+    if args.cmd == "edit":
+        from edit import cmd_edit
+
+        return cmd_edit()
+
+    parser.print_usage(sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
