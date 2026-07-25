@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "httpx>=0.27",
+#     "pydantic>=2.5",
+# ]
+# ///
+
+"""sf-download — CLI entry point for the SciForge download skill.
+
+Modes:
+
+  sf-download doctor
+  sf-download <identifier>                   [--emit-json --out DIR]
+  sf-download --ids "id1,id2,..."            [--emit-json --out DIR]
+  sf-download --from-file ids.txt            [--emit-json --out DIR]
+  sf-download --title "..."                  [--emit-json --out DIR]
+
+See SKILL.md and references/*.md for the full contract.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+# Make `scripts/` importable so the modules below (`main`, `config`,
+# `fetch`, `sources.*`) resolve as flat modules — mirrors `sf-lit`'s
+# entry-point convention.
+_HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(_HERE))
+
+from main import main  # noqa: E402
+
+
+if __name__ == "__main__":
+    sys.exit(main())
