@@ -4,7 +4,7 @@
 # dependencies = []
 # ///
 
-"""`litlib search` — paper-level FTS over Markdown + structured WHERE.
+"""`sf-lit search` — paper-level FTS over Markdown + structured WHERE.
 
 Scope (Q5, Q12, Q15/2C):
   - Content search runs against ``papers_md_fts.markdown`` at
@@ -97,8 +97,8 @@ def run(args) -> int:
     cfg = config_mod.load_config()
     lib = Path(cfg["_library_path"])
     if not (lib / "index.db").exists():
-        print("error: no library yet — run `litlib init`", file=sys.stderr)
-        return 1
+        print("error: no library yet — run `sf-lit init`", file=sys.stderr)
+        return 3
     dbmod.connect(lib / "index.db")
     try:
         return _run(args)

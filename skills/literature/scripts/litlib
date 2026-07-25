@@ -1,417 +1,44 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.11"
-# dependencies = []
-# ///
+"""litlib — deprecated shim; forwards to sf-lit.
 
-"""litlib — CLI dispatcher for the SciForge literature skill (v2, MD-first).
-
-Scope: local library data management only. External data (arXiv, DOI,
-GitHub, news) is the job of companion skills that hand pre-assembled
-metadata to `litlib add`. PDF→Markdown conversion runs against
-user-installed MinerU or Docling; `litlib` shells out.
-
-Verbs:
-
-  litlib init [--path DIR] [--force]
-  litlib doctor
-  litlib config [path|show|get <key>]
-  litlib citekey [--author X --year Y --title Z --arxiv-id A --doi D]
-
-  litlib add --meta-json PATH|- [--pdf-path P --move-pdf --upsert
-                                  --and-convert --converter mineru|docling]
-  litlib add --title "..." [--author ... --year N --venue V --abstract A
-             --doi D --arxiv-id X --s2-id S --url U --tag T --collection C
-             --notes N --pdf-path P --move-pdf --manual --upsert
-             --and-convert --converter mineru|docling]
-
-  litlib convert <key> [--converter mineru|docling --reconvert --force
-                         --converted-dir DIR]
-  litlib status  <key> [--json]
-  litlib list    [--md-status absent|ready|failed|stale] [--json]
-
-  litlib add-si     <key> [--path P] [--url U] [--label L]
-  litlib add-github <key> --owner O --repo R [--url U --stars N --release T
-                                              --readme-summary TXT]
-  litlib add-news   <key> --url U [--title T --source S --kind KIND
-                                   --published-at DT]
-
-  litlib tag        <key> <tag> [--remove]
-  litlib collection <slug> {add|remove} <key>
-  litlib note       <key> [--open | --append TXT | --set-from FILE]
-
-  litlib search [<query>] [--tag T --collection C --year Y|Y-Y --author A
-                           --has-pdf --has-md --json --limit N]
-  litlib read   <key>   [--section S | --pages P | --kind K | --grep RE] [--json]
-  litlib show   <key>   [--json --refs --news --github]
-
-  litlib export <selector> --format bibtex|json [--out F --include-file]
-  litlib open   <key> [pdf|md|notes|si|si:N|github|url]
-  litlib rebuild-db
-
-External-data verbs remain out of scope:
-  - `add --id <arxiv|doi>` — call arxiv-fetch / doi-fetch instead
-  - `update --news/--github/--refs/--metadata` — call the corresponding
-    fetch skills, then re-ingest via `add --upsert`
+The literature skill's CLI was renamed from `litlib` to `sf-lit` per
+ADR-0005 (SciForge `sf-` naming). This shim keeps existing invocations
+working until v1.0. It prints a one-line deprecation notice to stderr
+and then execs `sf-lit` with the same arguments.
 """
 
-import argparse
-import importlib.util
+from __future__ import annotations
+
 import os
-import shutil
-import sqlite3
 import sys
 from pathlib import Path
 
-# Don't leave __pycache__ around in the skill dir (linter flags them).
-os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
-sys.dont_write_bytecode = True
 
-HERE = Path(__file__).parent.resolve()
-sys.path.insert(0, str(HERE))
+def main() -> int:
+    here = Path(__file__).resolve().parent
+    target = here / "sf-lit"
+    if not target.exists():
+        sys.stderr.write(
+            "litlib: cannot locate sf-lit next to this shim "
+            f"(expected {target}). Reinstall the skill.\n"
+        )
+        return 1
 
-import config as config_mod  # noqa: E402
-import db as dbmod  # noqa: E402
-import ids as ids_mod  # noqa: E402
-import init_db as init_mod  # noqa: E402
+    sys.stderr.write(
+        "litlib: deprecated — use `sf-lit` (ADR-0005). "
+        "This shim will be removed in v1.0.\n"
+    )
 
-
-def _print_kv(**kv):
-    for k, v in kv.items():
-        print(f"{k}={v}")
-
-
-# ---- init / doctor / config / citekey --------------------------------
-
-
-def cmd_init(args):
-    cfg = config_mod.load_config()
-    lib = Path(args.path).expanduser().resolve() if args.path else Path(cfg["_library_path"])
-    init_mod.init_library(lib, force=args.force)
-    _print_kv(library=lib, db=lib / "index.db", schema_version=init_mod.SCHEMA_VERSION)
-
-
-def cmd_doctor(args):
-    cfg = config_mod.load_config()
-    lib = Path(cfg["_library_path"])
-    db_path = lib / "index.db"
-    lines = []
-
-    def ok(m): lines.append(f"  ✓ {m}")
-    def warn(m): lines.append(f"  ⚠ {m}")
-    def fail(m): lines.append(f"  ✗ {m}")
-
-    lines.append("Config:")
-    ok(f"config = {cfg['_config_path']}")
-    ok(f"library.path = {lib}")
-
-    lines.append("Library:")
-    if lib.exists():
-        ok(f"library dir present ({lib})")
-    else:
-        warn("library dir missing — run `litlib init`")
-
-    if db_path.exists():
-        try:
-            conn = dbmod.connect(db_path)
-            match, ver = dbmod.ensure_schema_version(conn, init_mod.SCHEMA_VERSION)
-            paper_count = conn.execute("SELECT count(*) FROM papers").fetchone()[0]
-            dbmod.close()
-            if match:
-                ok(f"index.db present (schema v{ver}, {paper_count} papers)")
-            else:
-                warn(f"schema mismatch: file=v{ver} expected=v{init_mod.SCHEMA_VERSION}")
-        except (sqlite3.DatabaseError, sqlite3.OperationalError) as e:
-            fail(f"index.db unreadable: {e}")
-    else:
-        warn("index.db missing — run `litlib init`")
-
-    print("\n".join(lines))
-
-
-def cmd_config(args):
-    sub = args.subcommand
-    if sub == "path" or sub is None:
-        print(config_mod.load_config_path())
-    elif sub == "show":
+    argv = [sys.executable, str(target), *sys.argv[1:]]
+    if os.name == "nt":
+        # On Windows os.execv replaces the process but Python resolves
+        # sys.executable oddly under some launchers; spawn + wait is safer.
         import subprocess
-        subprocess.run([sys.executable, str(HERE / "config.py"), "show"])
-    elif sub == "get":
-        val = config_mod.get_config_value(args.key)
-        if val is None:
-            sys.exit(1)
-        print(val)
 
-
-def cmd_citekey(args):
-    """Compute a citekey without inserting anything.
-
-    Companion skills call this to precompute the key so they can write
-    a sidecar directly and then invoke `rebuild-db`.
-    """
-    author = args.author or "Anon"
-    year = args.year
-    title = args.title or ""
-    # If an arxiv/doi is provided but no title, fall back to that as the "word".
-    if not title:
-        title = args.arxiv_id or args.doi or ""
-    key = ids_mod.make_citekey(author, year, title)
-    print(key)
-
-
-# ---- lazy dispatch to per-verb modules --------------------------------
-
-
-def _lazy(modname: str):
-    """Import a sibling module lazily to keep --help fast."""
-    path = HERE / f"{modname}.py"
-    if not path.exists():
-        return None
-    spec = importlib.util.spec_from_file_location(modname, path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def _dispatch(modname: str, milestone: str, args):
-    m = _lazy(modname)
-    if m is None:
-        print(f"error: {modname}.py not yet implemented ({milestone})", file=sys.stderr)
-        sys.exit(64)
-    sys.exit(m.run(args))
-
-
-def cmd_add(args):      _dispatch("add",         "M4", args)
-def cmd_show(args):     _dispatch("show",        "M3", args)
-def cmd_search(args):   _dispatch("search",      "M3", args)
-def cmd_export(args):   _dispatch("export_lib",  "M6", args)
-def cmd_open(args):     _dispatch("open_file",   "M6", args)
-def cmd_rebuild(args):  _dispatch("rebuild",     "M6", args)
-def cmd_convert(args):  _dispatch("convert",     "M7", args)
-def cmd_read(args):     _dispatch("read",        "M7", args)
-
-
-def cmd_status(args):
-    m = _lazy("status")
-    if m is None:
-        print("error: status.py not implemented", file=sys.stderr)
-        sys.exit(64)
-    sys.exit(m.cmd_status(args))
-
-
-def cmd_list(args):
-    m = _lazy("status")
-    if m is None:
-        print("error: status.py not implemented", file=sys.stderr)
-        sys.exit(64)
-    sys.exit(m.cmd_list(args))
-
-
-def cmd_associate(args):
-    m = _lazy("associate")
-    if m is None:
-        print(f"error: associate.py not yet implemented (M5)", file=sys.stderr)
-        sys.exit(64)
-    sys.exit(m.run(args))
-
-
-# ---- parser wiring ----------------------------------------------------
-
-
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        prog="litlib",
-        description="SciForge literature-library data-management CLI",
-    )
-    sub = p.add_subparsers(dest="verb", required=True)
-
-    sp_init = sub.add_parser("init", help="Bootstrap the library")
-    sp_init.add_argument("--path")
-    sp_init.add_argument("--force", action="store_true")
-    sp_init.set_defaults(func=cmd_init)
-
-    sp_doc = sub.add_parser("doctor", help="Environment / DB health check")
-    sp_doc.set_defaults(func=cmd_doctor)
-
-    sp_cfg = sub.add_parser("config", help="Inspect config")
-    sp_cfg_sub = sp_cfg.add_subparsers(dest="subcommand")
-    sp_cfg_sub.add_parser("path")
-    sp_cfg_sub.add_parser("show")
-    sp_cfg_get = sp_cfg_sub.add_parser("get")
-    sp_cfg_get.add_argument("key")
-    sp_cfg.set_defaults(func=cmd_config)
-
-    sp_ck = sub.add_parser("citekey", help="Compute a citekey without inserting")
-    sp_ck.add_argument("--author", required=True)
-    sp_ck.add_argument("--year", type=int)
-    sp_ck.add_argument("--title")
-    sp_ck.add_argument("--arxiv-id", dest="arxiv_id")
-    sp_ck.add_argument("--doi")
-    sp_ck.set_defaults(func=cmd_citekey)
-
-    # add — the workhorse
-    sp_add = sub.add_parser(
-        "add",
-        help="Ingest a paper (from metadata JSON, CLI flags, or manual placeholder)",
-    )
-    grp = sp_add.add_mutually_exclusive_group(required=True)
-    grp.add_argument("--meta-json", dest="meta_json", help="JSON blob path or '-'")
-    grp.add_argument("--title")
-    sp_add.add_argument("--author", action="append", default=[])
-    sp_add.add_argument("--year", type=int)
-    sp_add.add_argument("--venue")
-    sp_add.add_argument("--venue-full", dest="venue_full")
-    sp_add.add_argument("--abstract")
-    sp_add.add_argument("--doi")
-    sp_add.add_argument("--arxiv-id", dest="arxiv_id")
-    sp_add.add_argument("--s2-id", dest="s2_id")
-    sp_add.add_argument("--url")
-    sp_add.add_argument("--tag", action="append", default=[])
-    sp_add.add_argument("--collection", action="append", default=[])
-    sp_add.add_argument("--notes")
-    sp_add.add_argument("--pdf-path", dest="pdf_path", help="Local PDF to ingest into the library")
-    sp_add.add_argument("--move-pdf", dest="move_pdf", action="store_true")
-    sp_add.add_argument("--manual", action="store_true", help="Explicit placeholder entry")
-    sp_add.add_argument("--upsert", action="store_true", help="Merge if a matching paper exists")
-    sp_add.add_argument(
-        "--and-convert", dest="and_convert", action="store_true",
-        help="Run `litlib convert` immediately after ingest (two-phase sugar)",
-    )
-    sp_add.add_argument(
-        "--converter", choices=["mineru", "docling"], default=None,
-        help="With --and-convert: pick the converter (defaults to config)",
-    )
-    sp_add.set_defaults(func=cmd_add)
-
-    # associate verbs — routed to associate.py
-    def _add_associate(name, **kw):
-        sp = sub.add_parser(name, **kw)
-        sp.set_defaults(func=cmd_associate, _assoc_verb=name)
-        return sp
-
-    sp_asi = _add_associate("add-si", help="Attach a Supporting Information record")
-    sp_asi.add_argument("key")
-    sp_asi.add_argument("--path")
-    sp_asi.add_argument("--url")
-    sp_asi.add_argument("--label")
-
-    sp_agh = _add_associate("add-github", help="Attach a GitHub project")
-    sp_agh.add_argument("key")
-    sp_agh.add_argument("--owner", required=True)
-    sp_agh.add_argument("--repo", required=True)
-    sp_agh.add_argument("--url")
-    sp_agh.add_argument("--stars", type=int)
-    sp_agh.add_argument("--release", dest="latest_release")
-    sp_agh.add_argument("--readme-summary", dest="readme_summary")
-
-    sp_ann = _add_associate("add-news", help="Attach a news / blog link")
-    sp_ann.add_argument("key")
-    sp_ann.add_argument("--url", required=True)
-    sp_ann.add_argument("--title")
-    sp_ann.add_argument("--source", dest="source_name")
-    sp_ann.add_argument("--kind", default="news")
-    sp_ann.add_argument("--published-at", dest="published_at")
-
-    sp_tag = _add_associate("tag", help="Add / remove a tag")
-    sp_tag.add_argument("key")
-    sp_tag.add_argument("tag")
-    sp_tag.add_argument("--remove", action="store_true")
-
-    sp_col = _add_associate("collection", help="Add / remove a paper in a collection")
-    sp_col.add_argument("slug")
-    sp_col.add_argument("action", choices=["add", "remove"])
-    sp_col.add_argument("key")
-
-    sp_note = _add_associate("note", help="View / append to a paper's notes.md")
-    sp_note.add_argument("key")
-    grp2 = sp_note.add_mutually_exclusive_group()
-    grp2.add_argument("--open", action="store_true", dest="open_")
-    grp2.add_argument("--append")
-    grp2.add_argument("--set-from", dest="set_from")
-
-    # search / show / read / status / list
-    sp_search = sub.add_parser("search", help="Search the local library (paper-level FTS)")
-    sp_search.add_argument("query", nargs="?", default="")
-    sp_search.add_argument("--tag", action="append", default=[])
-    sp_search.add_argument("--collection", action="append", default=[])
-    sp_search.add_argument("--year")
-    sp_search.add_argument("--author")
-    sp_search.add_argument("--has-pdf", dest="has_pdf", action="store_true")
-    sp_search.add_argument("--has-md", dest="has_md", action="store_true")
-    sp_search.add_argument("--json", action="store_true")
-    sp_search.add_argument("--limit", type=int, default=20)
-    sp_search.set_defaults(func=cmd_search)
-
-    sp_show = sub.add_parser("show", help="Show a paper")
-    sp_show.add_argument("key")
-    sp_show.add_argument("--json", action="store_true")
-    sp_show.add_argument("--refs", action="store_true")
-    sp_show.add_argument("--news", action="store_true")
-    sp_show.add_argument("--github", action="store_true")
-    sp_show.set_defaults(func=cmd_show)
-
-    sp_read = sub.add_parser("read", help="Read canonical paper.md (whole or sliced)")
-    sp_read.add_argument("key")
-    sp_read.add_argument("--section", help="Fuzzy heading match; returns matching sections")
-    sp_read.add_argument("--pages", help="Page spec (MinerU only): 3, 3-5, or 3,7,9-11")
-    sp_read.add_argument("--kind",
-                         help="Block kind (MinerU only): table|equation|image_caption|code|text")
-    sp_read.add_argument("--grep", help="Python regex over paper.md; returns matching lines")
-    sp_read.add_argument("--json", action="store_true")
-    sp_read.set_defaults(func=cmd_read)
-
-    sp_conv = sub.add_parser("convert", help="Render PDF → Markdown (MinerU/Docling)")
-    sp_conv.add_argument("key")
-    sp_conv.add_argument("--converter", choices=["mineru", "docling"], default=None)
-    sp_conv.add_argument("--reconvert", action="store_true",
-                         help="Re-run even if md_status is already 'ready'")
-    sp_conv.add_argument("--force", action="store_true",
-                         help="With --reconvert, bypass sha256+converter+version fuse")
-    sp_conv.add_argument("--converted-dir", dest="converted_dir",
-                         help="Skip the converter; copy an existing output tree instead")
-    sp_conv.set_defaults(func=cmd_convert)
-
-    sp_stat = sub.add_parser("status", help="Show a paper's MD conversion state")
-    sp_stat.add_argument("key")
-    sp_stat.add_argument("--json", action="store_true")
-    sp_stat.set_defaults(func=cmd_status)
-
-    sp_ls = sub.add_parser("list", help="List papers, optionally filtered by MD status")
-    sp_ls.add_argument("--md-status", dest="md_status", default=None,
-                       choices=["absent", "ready", "failed", "stale"])
-    sp_ls.add_argument("--json", action="store_true")
-    sp_ls.set_defaults(func=cmd_list)
-
-    # export / open / rebuild-db
-    sp_exp = sub.add_parser("export", help="Export citations")
-    sp_exp.add_argument("selector", nargs="?")
-    sp_exp.add_argument("--format", default="bibtex", choices=["bibtex", "json"])
-    sp_exp.add_argument("--tag", action="append", default=[])
-    sp_exp.add_argument("--collection", action="append", default=[])
-    sp_exp.add_argument("--all", action="store_true", dest="all_")
-    sp_exp.add_argument("--query")
-    sp_exp.add_argument("--out")
-    sp_exp.add_argument("--include-file", action="store_true", dest="include_file")
-    sp_exp.set_defaults(func=cmd_export)
-
-    sp_open = sub.add_parser("open", help="Open a paper's PDF / MD / notes / SI / repo")
-    sp_open.add_argument("key")
-    sp_open.add_argument("target", nargs="?", default="pdf",
-                         help="pdf | md | notes | si | si:N | github | url")
-    sp_open.set_defaults(func=cmd_open)
-
-    sp_rb = sub.add_parser("rebuild-db", help="Rebuild index.db from sidecar metadata.json")
-    sp_rb.add_argument("--dry-run", action="store_true")
-    sp_rb.set_defaults(func=cmd_rebuild)
-
-    return p
-
-
-def main(argv=None):
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    return args.func(args)
+        return subprocess.call(argv)
+    os.execv(sys.executable, argv)
+    return 0  # unreachable
 
 
 if __name__ == "__main__":
-    sys.exit(main() or 0)
+    raise SystemExit(main())

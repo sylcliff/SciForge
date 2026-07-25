@@ -57,6 +57,34 @@ SciForge layers on top of the agent host you already use:
 - 🔍 **Citation & Reference Management** — BibTeX-first, Zotero-friendly, citation-style-aware.
 - 🔬 **Reproducibility First** — every analysis is scripted, versioned, and re-runnable.
 
+## 🧭 How this project is built
+
+SciForge has a small, deliberate architecture. If you plan to contribute or
+extend it, start here:
+
+- [`CONTEXT.md`](CONTEXT.md) — the shared vocabulary (paper, citekey, domain
+  skill, micro skill, SciForge URI, …). Read this first.
+- [`SKILL_AUTHORING.md`](SKILL_AUTHORING.md) — the rules every skill follows:
+  CLI naming, the `--json` output contract, exit codes, the destructive-op
+  checklist, when a skill should own state.
+- [`docs/adr/`](docs/adr/) — the "why did they build it this way?"
+  architectural decision records (hybrid opinion/contract, CLI-first, URI
+  lazy resolution, layered trust model, `sf-` naming, minimum output
+  contract).
+
+The short version:
+
+- **Skills are CLIs.** Every SciForge capability ships as an `sf-*`
+  command-line tool that prints human-readable text by default and JSON on
+  `--json`. Skills do not import each other.
+- **State lives in domain skills.** `sf-lit` owns the paper catalog;
+  future `sf-analysis` will own experiments; `sf-writing` will own
+  manuscripts. Everything else is stateless "micro skills" that compose.
+- **Cross-skill references are lazy.** Skills refer to each other's
+  entities with `sciforge://<skill>/<id>` URIs, resolved only when read.
+- **The host agent is the orchestrator.** SciForge has no daemon, no
+  scheduler, no long-running process — just CLIs and file conventions.
+
 ## 🚀 Getting Started
 
 > ⚠️ **Early development.** Interfaces are still shifting — expect breaking changes.

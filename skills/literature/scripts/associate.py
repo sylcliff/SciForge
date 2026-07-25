@@ -4,7 +4,7 @@
 # dependencies = []
 # ///
 
-"""`litlib tag / collection / note / add-si / add-github / add-news`
+"""`sf-lit tag / collection / note / add-si / add-github / add-news`
 
 All are pure write operations — no external fetching. Companion skills
 call `add-github --owner O --repo R --stars N` etc. after they have
@@ -33,7 +33,7 @@ def _require_paper(key: str) -> str:
     ck = _resolve_key(key)
     if ck is None:
         print(f"error: no paper matches {key!r}", file=sys.stderr)
-        sys.exit(1)
+        sys.exit(3)
     return ck
 
 
@@ -108,7 +108,7 @@ def cmd_note(key: str, open_: bool, append: str | None, set_from: str | None):
         src = Path(set_from).expanduser()
         if not src.is_file():
             print(f"error: {set_from} not found", file=sys.stderr)
-            sys.exit(1)
+            sys.exit(3)
         shutil.copyfile(src, notes_path)
         print(f"set notes from {set_from}")
 
@@ -117,7 +117,7 @@ def cmd_add_si(key: str, path: str | None, url: str | None, label: str | None):
     ck = _require_paper(key)
     if not path and not url:
         print("error: --path or --url required for add-si", file=sys.stderr)
-        return 1
+        return 2
     # If path is given, copy the file into the SI subdir
     config = config_mod.load_config()
     lib = Path(config["_library_path"])
@@ -130,7 +130,7 @@ def cmd_add_si(key: str, path: str | None, url: str | None, label: str | None):
         src = Path(path).expanduser()
         if not src.is_file():
             print(f"error: SI file not found: {path}", file=sys.stderr)
-            return 1
+            return 3
         dest = si_dir / src.name
         shutil.copyfile(src, dest)
         stored_path = str(dest.relative_to(lib))
@@ -182,8 +182,8 @@ def run(args) -> int:
     cfg = config_mod.load_config()
     lib = Path(cfg["_library_path"])
     if not (lib / "index.db").exists():
-        print("error: no library yet — run `litlib init`", file=sys.stderr)
-        return 1
+        print("error: no library yet — run `sf-lit init`", file=sys.stderr)
+        return 3
     dbmod.connect(lib / "index.db")
     try:
         verb = args._assoc_verb  # injected by the dispatcher
@@ -203,7 +203,7 @@ def run(args) -> int:
                          args.kind, args.published_at)
         else:
             print(f"error: unknown associate verb {verb!r}", file=sys.stderr)
-            return 1
+            return 2
         return 0
     finally:
         dbmod.close()
@@ -214,7 +214,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser("associate")
     ap.add_argument("_assoc_verb", help="Internal: injected by dispatcher")
     ap.add_argument("key")
-    # minimal — real usage goes through litlib
+    # minimal — real usage goes through sf-lit
     ap.add_argument("--url")
     ap.add_argument("--owner")
     ap.add_argument("--repo")

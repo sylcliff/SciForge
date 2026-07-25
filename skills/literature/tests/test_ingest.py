@@ -1,4 +1,4 @@
-"""Integration tests for `litlib add` (catalog step, two-phase).
+"""Integration tests for `sf-lit add` (catalog step, two-phase).
 
 Uses the fake-converter fixtures via ``libenv`` / ``run`` from conftest.
 Focuses on:
@@ -58,13 +58,15 @@ def test_meta_json_file(run, tmp_path):
 
 
 def test_meta_json_invalid(run):
+    # ADR-0006: malformed --meta-json is invalid user input (exit 2).
     r = run("add", "--meta-json", "-", stdin="not json{")
-    assert r.returncode == 1
+    assert r.returncode == 2
 
 
 def test_empty_title_rejected(run):
+    # ADR-0006: empty title fails the metadata schema → invalid input (exit 2).
     r = run("add", "--title", "   ")
-    assert r.returncode == 1
+    assert r.returncode == 2
 
 
 # ---- PDF handling ------------------------------------------------------
@@ -95,15 +97,19 @@ def test_pdf_move_semantics(run, libenv):
 
 
 def test_missing_pdf_rejected(run):
+    # ADR-0006: --pdf-path pointing at a nonexistent file → resource
+    # not found (exit 3). The user named a file; it isn't there.
     r = run("add", "--title", "X", "--pdf-path", "/nonexistent/xyz.pdf")
-    assert r.returncode == 1
+    assert r.returncode == 3
 
 
 def test_zero_byte_pdf_rejected(run, tmp_path):
+    # ADR-0006: file exists but is empty → invalid user input (exit 2).
+    # Distinct from "file missing" (3) because the file is there but bad.
     p = tmp_path / "empty.pdf"
     p.write_bytes(b"")
     r = run("add", "--title", "X", "--pdf-path", str(p))
-    assert r.returncode == 1
+    assert r.returncode == 2
 
 
 # ---- duplicate & upsert -----------------------------------------------

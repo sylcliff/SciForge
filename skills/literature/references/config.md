@@ -22,8 +22,8 @@ path = "./library"                  # cwd-relative or absolute; "~" expanded
 style = "authoryearword"            # authoryearword | authoryear | arxiv | doi-slug
 on_collision = "suffix"             # suffix (_a, _b, ...) | error
 
-# PDF → Markdown converter binaries (used by `litlib convert` and
-# `litlib add --and-convert`). MinerU / Docling are invoked as CLI
+# PDF → Markdown converter binaries (used by `sf-lit convert` and
+# `sf-lit add --and-convert`). MinerU / Docling are invoked as CLI
 # subprocesses; install them separately (`pipx install mineru`, etc.).
 [converter]
 default = "mineru"                  # picked when `--converter` is omitted
@@ -95,15 +95,15 @@ export LITLIB_MINERU_BIN="python -m magic_pdf"
 export LITLIB_MINERU_BIN="docker run --rm -v /tmp:/tmp mineru-image mineru"
 ```
 
-`litlib doctor` reports the resolved command for each converter.
+`sf-lit doctor` reports the resolved command for each converter.
 
 ## Inspecting the effective config
 
 ```bash
-scripts/litlib config path          # print the file being read
-scripts/litlib config show          # dump the effective config
-scripts/litlib config get library.path
-scripts/litlib config get converter.default
+scripts/sf-lit config path          # print the file being read
+scripts/sf-lit config show          # dump the effective config
+scripts/sf-lit config get library.path
+scripts/sf-lit config get converter.default
 ```
 
 ## Suggested global config

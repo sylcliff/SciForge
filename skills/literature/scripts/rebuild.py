@@ -4,7 +4,7 @@
 # dependencies = []
 # ///
 
-"""`litlib rebuild-db` — regenerate index.db from disk state.
+"""`sf-lit rebuild-db` — regenerate index.db from disk state.
 
 The `library/papers/<citekey>/metadata.json` files are the canonical
 source for the metadata catalog. If a paper also has `paper.md` +
@@ -178,12 +178,12 @@ def run(args) -> int:
     papers_dir = lib / "papers"
     if not papers_dir.exists():
         print(f"error: no papers dir at {papers_dir}", file=sys.stderr)
-        return 1
+        return 3
 
     sidecars = sorted(papers_dir.glob("*/metadata.json"))
     if not sidecars:
         print("(no sidecar metadata.json files to rebuild from)", file=sys.stderr)
-        return 1
+        return 3
 
     if args.dry_run:
         print(f"would rebuild {len(sidecars)} entries:")

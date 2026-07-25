@@ -4,7 +4,7 @@
 # dependencies = []
 # ///
 
-"""`litlib show` — render one paper as a compact markdown card or JSON."""
+"""`sf-lit show` — render one paper as a compact markdown card or JSON."""
 
 import json
 import sys
@@ -88,8 +88,8 @@ def run(args) -> int:
     cfg = config_mod.load_config()
     lib = Path(cfg["_library_path"])
     if not (lib / "index.db").exists():
-        print("error: no library yet — run `litlib init`", file=sys.stderr)
-        return 1
+        print("error: no library yet — run `sf-lit init`", file=sys.stderr)
+        return 3
     dbmod.connect(lib / "index.db")
     try:
         return _run(args, lib)
@@ -101,7 +101,7 @@ def _run(args, lib: Path) -> int:
     paper = _resolve_key(args.key)
     if paper is None:
         print(f"error: no paper matches {args.key!r}", file=sys.stderr)
-        return 1
+        return 3
 
     citekey = paper["citekey"]
     authors = _authors(citekey)
@@ -114,6 +114,13 @@ def _run(args, lib: Path) -> int:
 
     if args.json:
         out = dict(paper)
+        # SciForge minimum output contract (ADR-0006): every domain skill's
+        # `show --json` must expose {id, type, uri}. `id` doubles the citekey
+        # under its cross-skill name; `type` is the SciForge entity kind;
+        # `uri` is this paper's SciForge URI (see ADR-0003).
+        out["id"] = citekey
+        out["type"] = "paper"
+        out["uri"] = f"sciforge://literature/{citekey}"
         out["authors"] = authors
         out["tags"] = tags
         out["collections"] = collections
@@ -188,7 +195,7 @@ def _run(args, lib: Path) -> int:
         note = paper.get("md_last_error") or "PDF changed"
         print(f"**md:** stale ({note})")
     else:
-        print("**md:** absent (run `litlib convert`)")
+        print("**md:** absent (run `sf-lit convert`)")
 
     if paper.get("abstract"):
         print()

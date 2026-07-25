@@ -4,7 +4,7 @@
 # dependencies = []
 # ///
 
-"""`litlib convert <citekey>` — render a paper's PDF to canonical Markdown.
+"""`sf-lit convert <citekey>` — render a paper's PDF to canonical Markdown.
 
 Second phase of the two-phase ingest workflow. ``add`` catalogues the
 paper's metadata + copies its PDF into the library; ``convert`` spawns
@@ -283,8 +283,8 @@ def run(args) -> int:
     cfg = config_mod.load_config()
     lib = Path(cfg["_library_path"])
     if not (lib / "index.db").exists():
-        print("error: no library yet — run `litlib init`", file=sys.stderr)
-        return 1
+        print("error: no library yet — run `sf-lit init`", file=sys.stderr)
+        return 3
     dbmod.connect(lib / "index.db")
     try:
         return _run(args, lib)
@@ -296,23 +296,23 @@ def _run(args, lib: Path) -> int:
     paper = _resolve_key(args.key)
     if paper is None:
         print(f"error: no paper matches {args.key!r}", file=sys.stderr)
-        return 1
+        return 3
     citekey = paper["citekey"]
     paper_dir = _paper_dir(lib, citekey)
     if not paper.get("pdf_path"):
         print(f"error: {citekey} has no PDF; convert requires paper.pdf",
               file=sys.stderr)
-        return 1
+        return 3
     pdf_path = lib / paper["pdf_path"]
     if not pdf_path.is_file():
         print(f"error: paper.pdf missing on disk: {pdf_path}", file=sys.stderr)
-        return 1
+        return 3
 
     converter = args.converter or config_mod.default_converter()
     if converter not in ("mineru", "docling"):
         print(f"error: unknown converter {converter!r} (mineru | docling)",
               file=sys.stderr)
-        return 1
+        return 2
 
     already_ready = paper.get("md_status") == "ready"
     if already_ready and not args.reconvert:
@@ -321,7 +321,7 @@ def _run(args, lib: Path) -> int:
             f"Pass --reconvert to re-run (adds --force to bypass sha256 fuse).",
             file=sys.stderr,
         )
-        return 1
+        return 2
 
     pdf_sha = _sha256(pdf_path)
     argv_probe = config_mod.get_converter_command(converter) or [converter]
@@ -363,7 +363,9 @@ def _run(args, lib: Path) -> int:
     except ConverterError as e:
         _mark_failed(citekey, str(e))
         print(f"error: {e}", file=sys.stderr)
-        return 4 if "not found" in str(e).lower() or "not configured" in str(e).lower() else 1
+        # ADR-0006: `4` is reserved for destructive-refused. Converter
+        # binary missing or misconfigured is a system/runtime problem → `1`.
+        return 1
     except Exception as e:  # noqa: BLE001
         _mark_failed(citekey, f"{type(e).__name__}: {e}")
         print(f"error: {type(e).__name__}: {e}", file=sys.stderr)

@@ -1,4 +1,4 @@
-"""Integration tests for `litlib convert`.
+"""Integration tests for `sf-lit convert`.
 
 Covers the full idempotency table from Q8 plus Docling as a switch,
 --converted-dir, and the failure path.
@@ -154,7 +154,7 @@ def test_failed_convert_sets_status(run, libenv, monkeypatch):
     env = {**env, "LITLIB_MINERU_BIN": "/nonexistent/mineru"}
     import subprocess, sys
     from pathlib import Path as _P
-    LITLIB = _P(__file__).parent.parent / "scripts" / "litlib"
+    LITLIB = _P(__file__).parent.parent / "scripts" / "sf-lit"
     r = subprocess.run(
         [sys.executable, str(LITLIB), "convert", ck],
         env=env, capture_output=True, text=True,
@@ -177,7 +177,7 @@ def test_reconvert_after_failure_succeeds(run, libenv):
     _, env = libenv
     import subprocess, sys
     from pathlib import Path as _P
-    LITLIB = _P(__file__).parent.parent / "scripts" / "litlib"
+    LITLIB = _P(__file__).parent.parent / "scripts" / "sf-lit"
     bogus = {**env, "LITLIB_MINERU_BIN": "/nonexistent/mineru"}
     subprocess.run([sys.executable, str(LITLIB), "convert", ck],
                    env=bogus, capture_output=True, text=True)

@@ -222,7 +222,7 @@ if __name__ == "__main__":
     elif args[0] == "get" and len(args) >= 2:
         val = get_config_value(args[1])
         if val is None:
-            sys.exit(1)
+            sys.exit(3)
         print(val)
     elif args[0] == "show":
         import tomllib as tml

@@ -4,14 +4,14 @@
 # dependencies = []
 # ///
 
-"""`litlib export <selector> --format bibtex|json`
+"""`sf-lit export <selector> --format bibtex|json`
 
 Selector forms:
-  litlib export <citekey>             # single paper
-  litlib export --tag T [--tag T2]    # union of tag(s)
-  litlib export --collection C        # collection
-  litlib export --all
-  litlib export --query "search terms" [--tag T ...]
+  sf-lit export <citekey>             # single paper
+  sf-lit export --tag T [--tag T2]    # union of tag(s)
+  sf-lit export --collection C        # collection
+  sf-lit export --all
+  sf-lit export --query "search terms" [--tag T ...]
 
 Formats: bibtex (default), json.
 """
@@ -170,7 +170,7 @@ def _select_papers(args) -> list[dict]:
     if not where and not args.all_:
         print("error: export needs a selector — citekey, --tag, --collection, --all, or --query",
               file=sys.stderr)
-        sys.exit(1)
+        sys.exit(2)
 
     sql = "SELECT * FROM papers"
     if where:
@@ -184,14 +184,14 @@ def run(args) -> int:
     cfg = config_mod.load_config()
     lib = Path(cfg["_library_path"])
     if not (lib / "index.db").exists():
-        print("error: no library yet — run `litlib init`", file=sys.stderr)
-        return 1
+        print("error: no library yet — run `sf-lit init`", file=sys.stderr)
+        return 3
     dbmod.connect(lib / "index.db")
     try:
         papers = _select_papers(args)
         if not papers:
             print("(no papers match selector)", file=sys.stderr)
-            return 1
+            return 3
 
         if args.format == "bibtex":
             out_lines = [_paper_to_bibtex(p, lib, args.include_file) for p in papers]

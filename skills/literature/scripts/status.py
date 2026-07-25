@@ -4,7 +4,7 @@
 # dependencies = []
 # ///
 
-"""`litlib status` / `litlib list --md-status` — MD conversion state.
+"""`sf-lit status` / `sf-lit list --md-status` — MD conversion state.
 
 The DB's ``papers.md_status`` is the source of truth, but the DB doesn't
 know if the user hand-deleted ``paper.md`` or replaced the PDF outside
@@ -123,14 +123,14 @@ def cmd_status(args) -> int:
     cfg = config_mod.load_config()
     lib = Path(cfg["_library_path"])
     if not (lib / "index.db").exists():
-        print("error: no library yet — run `litlib init`", file=sys.stderr)
-        return 1
+        print("error: no library yet — run `sf-lit init`", file=sys.stderr)
+        return 3
     dbmod.connect(lib / "index.db")
     try:
         paper = _resolve_key(args.key)
         if paper is None:
             print(f"error: no paper matches {args.key!r}", file=sys.stderr)
-            return 1
+            return 3
         effective, sidecar = _revalidate(paper, lib)
 
         record = {
@@ -168,8 +168,8 @@ def cmd_list(args) -> int:
     cfg = config_mod.load_config()
     lib = Path(cfg["_library_path"])
     if not (lib / "index.db").exists():
-        print("error: no library yet — run `litlib init`", file=sys.stderr)
-        return 1
+        print("error: no library yet — run `sf-lit init`", file=sys.stderr)
+        return 3
     dbmod.connect(lib / "index.db")
     try:
         where = []
@@ -178,7 +178,7 @@ def cmd_list(args) -> int:
             if args.md_status not in VALID_STATUSES:
                 print(f"error: --md-status must be one of {'|'.join(VALID_STATUSES)}",
                       file=sys.stderr)
-                return 1
+                return 2
             where.append("md_status = ?")
             params.append(args.md_status)
         sql = ("SELECT citekey, title, year, md_status, md_last_error, pdf_path "

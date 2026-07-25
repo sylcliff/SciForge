@@ -3,18 +3,18 @@
 This is the contract between companion skills and `literature`. Any
 external skill that fetches metadata (arXiv, DOI, GitHub, news, …)
 should emit JSON conforming to this schema and pipe it into
-`litlib add --meta-json -`. Companion skills are expected to hand off
+`sf-lit add --meta-json -`. Companion skills are expected to hand off
 **three products**:
 
 1. A **metadata JSON** matching the schema below.
 2. A **local PDF path** (non-zero-byte file). Optional only when the
    caller has explicitly declared "no PDF" via CLI-mode `--manual`.
 3. A **citekey suggestion** (optional; precompute via
-   `litlib citekey --author X --year Y --title Z`).
+   `sf-lit citekey --author X --year Y --title Z`).
 
 `add` is strictly the **catalog** step. It never triggers MinerU or
 Docling. A freshly-added paper has ``md_status='absent'``. Full-text
-search is enabled by a separate `litlib convert <citekey>` call. The
+search is enabled by a separate `sf-lit convert <citekey>` call. The
 companion contract does **not** require the companion to run
 conversion — that is a `literature` responsibility once the paper is
 catalogued. Pass `--and-convert` to `add` when you want the two steps

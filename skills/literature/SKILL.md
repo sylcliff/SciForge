@@ -15,9 +15,9 @@ companion skills that hand pre-assembled metadata to this one.
 
 Every paper flows through two commands:
 
-1. **`litlib add`** — catalog step. Copies the PDF into the library,
+1. **`sf-lit add`** — catalog step. Copies the PDF into the library,
    writes `metadata.json`, inserts a row with `md_status='absent'`. Fast.
-2. **`litlib convert`** — MD step. Spawns MinerU (default) or Docling to
+2. **`sf-lit convert`** — MD step. Spawns MinerU (default) or Docling to
    render `paper.md`, promotes it as canonical, and indexes it into the
    FTS store. Synchronous; can take minutes on CPU. `md_status` becomes
    `ready` on success.
@@ -41,13 +41,13 @@ The two-in-one shortcut is `add --and-convert`.
 Do NOT invoke this skill to fetch something the user hasn't already
 provided. For "save arXiv paper 1706.03762", the agent should first
 invoke `arxiv-fetch` (or the equivalent) to pull metadata + download the
-PDF, then pipe its output into `litlib add --meta-json -`.
+PDF, then pipe its output into `sf-lit add --meta-json -`.
 
 ## First-run check
 
 ```bash
-scripts/litlib doctor            # verify env + DB + converter binaries
-scripts/litlib init              # only if doctor says the library is missing
+scripts/sf-lit doctor            # verify env + DB + converter binaries
+scripts/sf-lit init              # only if doctor says the library is missing
 ```
 
 `init` is idempotent.
@@ -58,10 +58,10 @@ External skills (or the user directly) route into the catalog through:
 
 | Caller has | Command |
 |---|---|
-| A metadata JSON blob + PDF | `scripts/litlib add --meta-json <path or -> --pdf-path P` |
-| Explicit fields + PDF | `scripts/litlib add --title "..." [--author X --year Y ...] --pdf-path P` |
-| Minimal info (fill in later) | `scripts/litlib add --title "..." --manual` |
-| A pre-written `metadata.json` under `library/papers/<key>/` | `scripts/litlib rebuild-db` |
+| A metadata JSON blob + PDF | `scripts/sf-lit add --meta-json <path or -> --pdf-path P` |
+| Explicit fields + PDF | `scripts/sf-lit add --title "..." [--author X --year Y ...] --pdf-path P` |
+| Minimal info (fill in later) | `scripts/sf-lit add --title "..." --manual` |
+| A pre-written `metadata.json` under `library/papers/<key>/` | `scripts/sf-lit rebuild-db` |
 
 The PDF is **copied** by default; `--move-pdf` moves it. `--upsert`
 merges non-empty fields (list fields — tags, collections, authors,
@@ -70,11 +70,11 @@ github, news, si — union).
 Then convert:
 
 ```bash
-scripts/litlib convert <citekey>                  # spawn MinerU
-scripts/litlib convert <citekey> --converter docling
-scripts/litlib convert <citekey> --reconvert      # re-render
-scripts/litlib convert <citekey> --reconvert --force   # bypass sha256 fuse
-scripts/litlib convert <citekey> --converted-dir DIR   # skip converter; ingest existing output
+scripts/sf-lit convert <citekey>                  # spawn MinerU
+scripts/sf-lit convert <citekey> --converter docling
+scripts/sf-lit convert <citekey> --reconvert      # re-render
+scripts/sf-lit convert <citekey> --reconvert --force   # bypass sha256 fuse
+scripts/sf-lit convert <citekey> --converted-dir DIR   # skip converter; ingest existing output
 ```
 
 ## Companion contract
@@ -84,13 +84,13 @@ External fetch skills produce three things:
 1. Metadata JSON matching `references/ingest-interface.md`.
 2. A local PDF path (non-zero-byte). Required unless the caller
    explicitly uses `--manual`.
-3. Optional: a suggested citekey (precomputed via `litlib citekey ...`).
+3. Optional: a suggested citekey (precomputed via `sf-lit citekey ...`).
 
 Example one-liner (assumes `arxiv-fetch` exists):
 
 ```bash
 arxiv-fetch --id 1706.03762 --emit-json --with-pdf /tmp/paper.pdf \
-  | scripts/litlib add --meta-json - --pdf-path /tmp/paper.pdf --move-pdf --and-convert
+  | scripts/sf-lit add --meta-json - --pdf-path /tmp/paper.pdf --move-pdf --and-convert
 ```
 
 ## Routing
@@ -99,32 +99,32 @@ arxiv-fetch --id 1706.03762 --emit-json --with-pdf /tmp/paper.pdf \
 
 | User asks for | Command |
 |---|---|
-| Save with CLI fields | `scripts/litlib add --title "..." --author ... --pdf-path P` |
-| Save from JSON | `scripts/litlib add --meta-json <path or -> --pdf-path P` |
+| Save with CLI fields | `scripts/sf-lit add --title "..." --author ... --pdf-path P` |
+| Save from JSON | `scripts/sf-lit add --meta-json <path or -> --pdf-path P` |
 | Save + convert in one step | append `--and-convert` |
 | Save from arXiv / DOI link | **First run a fetch skill**, then pipe |
-| Render an added paper to MD | `scripts/litlib convert <key>` |
-| Re-render (new MinerU / different converter) | `scripts/litlib convert <key> --reconvert [--force] [--converter docling]` |
+| Render an added paper to MD | `scripts/sf-lit convert <key>` |
+| Re-render (new MinerU / different converter) | `scripts/sf-lit convert <key> --reconvert [--force] [--converter docling]` |
 
 **Search / read / manage:**
 
 | User asks for | Command |
 |---|---|
-| Full-text search | `scripts/litlib search "<query>" [--tag --year --author --has-md]` |
-| List by MD status | `scripts/litlib list --md-status absent\|ready\|failed\|stale` |
-| Read a paper (whole) | `scripts/litlib read <key>` |
-| Read a section | `scripts/litlib read <key> --section "Methods"` |
-| Read specific pages (MinerU) | `scripts/litlib read <key> --pages 3-5` |
-| Read blocks by kind (MinerU) | `scripts/litlib read <key> --kind table\|equation\|image_caption` |
-| Grep the MD | `scripts/litlib read <key> --grep "regex"` |
-| Show one paper's metadata card | `scripts/litlib show <key>` |
-| Check MD state | `scripts/litlib status <key>` |
-| Cite | `scripts/litlib export <selector> --format bibtex` |
-| Open PDF / MD / notes / repo | `scripts/litlib open <key> [pdf\|md\|notes\|si\|si:N\|github\|url]` |
-| Tag / collection / note | `scripts/litlib tag / collection / note` |
-| Attach a GitHub repo | `scripts/litlib add-github <key> --owner O --repo R` |
-| Attach a news link | `scripts/litlib add-news <key> --url U [--kind blog]` |
-| Attach an SI file | `scripts/litlib add-si <key> --path P` |
+| Full-text search | `scripts/sf-lit search "<query>" [--tag --year --author --has-md]` |
+| List by MD status | `scripts/sf-lit list --md-status absent\|ready\|failed\|stale` |
+| Read a paper (whole) | `scripts/sf-lit read <key>` |
+| Read a section | `scripts/sf-lit read <key> --section "Methods"` |
+| Read specific pages (MinerU) | `scripts/sf-lit read <key> --pages 3-5` |
+| Read blocks by kind (MinerU) | `scripts/sf-lit read <key> --kind table\|equation\|image_caption` |
+| Grep the MD | `scripts/sf-lit read <key> --grep "regex"` |
+| Show one paper's metadata card | `scripts/sf-lit show <key>` |
+| Check MD state | `scripts/sf-lit status <key>` |
+| Cite | `scripts/sf-lit export <selector> --format bibtex` |
+| Open PDF / MD / notes / repo | `scripts/sf-lit open <key> [pdf\|md\|notes\|si\|si:N\|github\|url]` |
+| Tag / collection / note | `scripts/sf-lit tag / collection / note` |
+| Attach a GitHub repo | `scripts/sf-lit add-github <key> --owner O --repo R` |
+| Attach a news link | `scripts/sf-lit add-news <key> --url U [--kind blog]` |
+| Attach an SI file | `scripts/sf-lit add-si <key> --path P` |
 
 ## Interaction rules
 
@@ -172,7 +172,7 @@ citekey=<key>
 pdf=<absolute path or "(not provided)">
 notes=<absolute path>
 md_status=absent
-hint=run `litlib convert <key>` to enable full-text search
+hint=run `sf-lit convert <key>` to enable full-text search
 ```
 
 `convert` prints:
@@ -192,6 +192,39 @@ Or `action=noop` when the fuse trips.
 `score`, `snippet`, `has_md`, `md_status`). `read` prints the requested
 slice or, with `--json`, always returns an array (even for 0 or 1 hits).
 `show` renders a markdown card with a `**md:** <state>` line.
+
+## SciForge URI namespace
+
+This skill owns `sciforge://literature/<citekey>`. `sf-lit show <key>
+--json` is the resolver: it always emits `id`, `type`, and `uri` fields
+per [ADR-0006](../../docs/adr/0006-minimum-output-contract.md):
+
+```json
+{
+  "id": "vaswani2017attention",
+  "type": "paper",
+  "uri": "sciforge://literature/vaswani2017attention",
+  "citekey": "vaswani2017attention",
+  "title": "Attention Is All You Need",
+  "...": "..."
+}
+```
+
+Cross-skill references to a paper use the `uri` value; resolution is
+lazy (see [ADR-0003](../../docs/adr/0003-uri-cross-skill-refs-lazy.md)).
+
+## Exit codes
+
+Every `sf-lit` subcommand follows the SciForge minimum contract
+([ADR-0006](../../docs/adr/0006-minimum-output-contract.md)):
+
+| Code | Meaning | Examples |
+|---|---|---|
+| `0` | Success | `add`, `search`, `show`, `read` all completed |
+| `2` | Invalid user input | Bad `--meta-json`, missing `--title`, unknown `--converter`, `--section` + `--pages` combined, zero-byte PDF, unknown associate verb, duplicate without `--upsert` |
+| `3` | Resource not found | Unknown citekey, `--pdf-path` at nonexistent file, library not yet `init`ed, MinerU `_content_list.json` missing, no rows match export selector, `open` target absent |
+| `4` | Destructive refused (unused today) | Reserved. Currently `convert --reconvert` on an unchanged input is a no-op with exit `0`; passing `--force` to bypass the sha256 fuse remains a destructive op. |
+| `1`, `≥64` | Runtime error | Converter subprocess crashed, I/O error, uncaught exception |
 
 ## Search & read semantics
 
@@ -233,25 +266,25 @@ Requires MinerU installed (`pipx install mineru`), or Docling
 that's what you have.
 
 ```bash
-scripts/litlib init --path /tmp/testlib
+scripts/sf-lit init --path /tmp/testlib
 export SCIFORGE_CONFIG=<config.toml pointing at /tmp/testlib>
-scripts/litlib doctor
+scripts/sf-lit doctor
 echo "%PDF-1.4 fake" > /tmp/fake.pdf
-scripts/litlib add --title "Test paper" --author "Alice B Smith" --year 2024 \
+scripts/sf-lit add --title "Test paper" --author "Alice B Smith" --year 2024 \
     --arxiv-id 2401.00001 --pdf-path /tmp/fake.pdf --tag test
-scripts/litlib status  smith2024test         # → md_status=absent
-scripts/litlib convert smith2024test         # → md_status=ready
-scripts/litlib search "test"                 # BM25 hit + snippet
-scripts/litlib read   smith2024test          # dumps paper.md
-scripts/litlib show   smith2024test --json | jq .md
-scripts/litlib export smith2024test --format bibtex
+scripts/sf-lit status  smith2024test         # → md_status=absent
+scripts/sf-lit convert smith2024test         # → md_status=ready
+scripts/sf-lit search "test"                 # BM25 hit + snippet
+scripts/sf-lit read   smith2024test          # dumps paper.md
+scripts/sf-lit show   smith2024test --json | jq .md
+scripts/sf-lit export smith2024test --format bibtex
 ```
 
 ## Modules
 
 Modules live under `scripts/`:
 
-- Entry point: [scripts/litlib](scripts/litlib)
+- Entry point: [scripts/sf-lit](scripts/sf-lit)
 - Ingest & catalog: [scripts/add.py](scripts/add.py)
 - PDF→MD conversion: [scripts/convert.py](scripts/convert.py)
 - Search & read: [scripts/search.py](scripts/search.py),

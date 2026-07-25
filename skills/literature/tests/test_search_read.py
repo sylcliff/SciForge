@@ -1,4 +1,4 @@
-"""Integration tests for `litlib search` and `litlib read`.
+"""Integration tests for `sf-lit search` and `sf-lit read`.
 
 Exercises BM25 hits, structured filters, snippet output, MinerU vs
 Docling asymmetry (--pages/--kind vs --section fallback), and each of
@@ -130,7 +130,8 @@ def test_read_absent_paper_errors(run, libenv):
             "--pdf-path", str(p))
     ck = parse_kv(r.stdout)["citekey"]
     r = run("read", ck)
-    assert r.returncode == 1
+    # ADR-0006: reading an absent-MD paper → resource not found (exit 3).
+    assert r.returncode == 3
     assert "md_status=absent" in r.stderr
 
 

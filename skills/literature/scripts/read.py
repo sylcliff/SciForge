@@ -4,7 +4,7 @@
 # dependencies = []
 # ///
 
-"""`litlib read <citekey>` — read canonical Markdown, whole or in slices.
+"""`sf-lit read <citekey>` — read canonical Markdown, whole or in slices.
 
 Q11/B: this is the paired *read* command for search. ``search`` returns
 paper hits with a short snippet; ``read`` is how the caller pulls
@@ -375,7 +375,7 @@ def _grep_md(md: str, pattern: str) -> list[dict]:
 def _load_paper_md(paper_dir: Path) -> str:
     top = paper_dir / "paper.md"
     if not top.is_file():
-        raise FileNotFoundError(f"no paper.md at {top} — run `litlib convert` first")
+        raise FileNotFoundError(f"no paper.md at {top} — run `sf-lit convert` first")
     return top.read_text(encoding="utf-8")
 
 
@@ -383,8 +383,8 @@ def run(args) -> int:
     cfg = config_mod.load_config()
     lib = Path(cfg["_library_path"])
     if not (lib / "index.db").exists():
-        print("error: no library yet — run `litlib init`", file=sys.stderr)
-        return 1
+        print("error: no library yet — run `sf-lit init`", file=sys.stderr)
+        return 3
     dbmod.connect(lib / "index.db")
     try:
         return _run(args, lib)
@@ -396,15 +396,15 @@ def _run(args, lib: Path) -> int:
     paper = _resolve_key(args.key)
     if paper is None:
         print(f"error: no paper matches {args.key!r}", file=sys.stderr)
-        return 1
+        return 3
     citekey = paper["citekey"]
     if paper.get("md_status") == "absent":
         print(
             f"error: {citekey} has md_status=absent; run "
-            f"`litlib convert {citekey}` first",
+            f"`sf-lit convert {citekey}` first",
             file=sys.stderr,
         )
-        return 1
+        return 3
 
     paper_dir = _paper_dir(lib, citekey)
     sidecar = _read_sidecar(paper_dir)
@@ -414,7 +414,7 @@ def _run(args, lib: Path) -> int:
         md = _load_paper_md(paper_dir)
     except FileNotFoundError as e:
         print(f"error: {e}", file=sys.stderr)
-        return 1
+        return 3
 
     if paper.get("md_status") == "stale" and not args.json:
         print(
@@ -428,7 +428,7 @@ def _run(args, lib: Path) -> int:
     if sum(modes) > 1:
         print("error: pick at most one of --section / --pages / --kind / --grep",
               file=sys.stderr)
-        return 1
+        return 2
 
     # --pages / --kind require MinerU
     if (args.pages or args.kind) and converter != "mineru":
@@ -438,7 +438,7 @@ def _run(args, lib: Path) -> int:
             f"(this paper: {converter}); use --section instead",
             file=sys.stderr,
         )
-        return 1
+        return 2
 
     if args.section:
         return _do_section(args, paper_dir, converter, md, citekey)
@@ -446,12 +446,12 @@ def _run(args, lib: Path) -> int:
         content = _load_content_list(paper_dir, converter)
         if content is None:
             print("error: MinerU content_list.json not found on disk", file=sys.stderr)
-            return 1
+            return 3
         try:
             wanted = _parse_pages(args.pages)
         except ValueError as e:
             print(f"error: bad --pages spec: {e}", file=sys.stderr)
-            return 1
+            return 2
         out = _extract_pages_mineru(content, wanted)
         return _emit_pages(args, out, citekey)
     if args.kind:
@@ -461,11 +461,11 @@ def _run(args, lib: Path) -> int:
                 f"{'|'.join(sorted(_KIND_MAP))} (got {args.kind!r})",
                 file=sys.stderr,
             )
-            return 1
+            return 2
         content = _load_content_list(paper_dir, converter)
         if content is None:
             print("error: MinerU content_list.json not found on disk", file=sys.stderr)
-            return 1
+            return 3
         out = _extract_kind_mineru(content, args.kind)
         return _emit_kind(args, out, citekey)
     if args.grep:
@@ -473,7 +473,7 @@ def _run(args, lib: Path) -> int:
             out = _grep_md(md, args.grep)
         except ValueError as e:
             print(f"error: {e}", file=sys.stderr)
-            return 1
+            return 2
         return _emit_grep(args, out, citekey)
 
     # Default: dump the whole paper.md

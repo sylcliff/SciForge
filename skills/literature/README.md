@@ -5,7 +5,7 @@
 
 - 只做本地数据管理。**不联网抓取**——arXiv / DOI / PubMed 抓取交给
   companion skills。
-- CLI 优先(`scripts/litlib`),被 agent 用 Bash tool 调用。
+- CLI 优先(`scripts/sf-lit`),被 agent 用 Bash tool 调用。
 - Python 3.10+ **stdlib only**,零运行时依赖。
 - MinerU 或 Docling 由用户自己安装(`pipx install mineru` / `pipx install docling`),
   skill 通过子进程调用。
@@ -19,11 +19,11 @@ pipx install mineru
 pipx install docling
 
 # 2. 初始化库
-scripts/litlib doctor        # 环境自检
-scripts/litlib init          # 默认在 ./library
+scripts/sf-lit doctor        # 环境自检
+scripts/sf-lit init          # 默认在 ./library
 
 # 3. 归档一篇论文 + 立即转 Markdown
-scripts/litlib add \
+scripts/sf-lit add \
   --title "Attention Is All You Need" \
   --author "Ashish Vaswani" \
   --year 2017 --arxiv-id 1706.03762 \
@@ -31,15 +31,15 @@ scripts/litlib add \
   --and-convert                             # 一步归档 + 转换
 
 # 4. 搜索
-scripts/litlib search "attention mechanism"
-scripts/litlib read vaswani2017attention --section "Methods"
+scripts/sf-lit search "attention mechanism"
+scripts/sf-lit read vaswani2017attention --section "Methods"
 ```
 
 分两步走(严格两阶段)也是标准姿势:
 
 ```bash
-scripts/litlib add --title ... --pdf-path P     # md_status=absent
-scripts/litlib convert vaswani2017attention     # md_status=ready
+scripts/sf-lit add --title ... --pdf-path P     # md_status=absent
+scripts/sf-lit convert vaswani2017attention     # md_status=ready
 ```
 
 ## 目录结构
@@ -74,60 +74,60 @@ library/
 
 | 命令 | 作用 |
 |---|---|
-| `litlib add --meta-json - --pdf-path P` | 从 JSON blob + PDF 入库 |
-| `litlib add --title ... --pdf-path P` | 从 CLI flags 入库 |
-| `litlib add ... --and-convert` | 入库 + 立即转 MD(糖) |
-| `litlib add ... --upsert` | 合并到已有条目(元数据 union) |
-| `litlib convert <key>` | 渲染 canonical `paper.md` |
-| `litlib convert <key> --converter docling` | 换 converter 重跑 |
-| `litlib convert <key> --reconvert [--force]` | 再跑一次(带 sha256 保险丝) |
-| `litlib convert <key> --converted-dir D` | 逃生舱:直接吃已有输出,不启动子进程 |
+| `sf-lit add --meta-json - --pdf-path P` | 从 JSON blob + PDF 入库 |
+| `sf-lit add --title ... --pdf-path P` | 从 CLI flags 入库 |
+| `sf-lit add ... --and-convert` | 入库 + 立即转 MD(糖) |
+| `sf-lit add ... --upsert` | 合并到已有条目(元数据 union) |
+| `sf-lit convert <key>` | 渲染 canonical `paper.md` |
+| `sf-lit convert <key> --converter docling` | 换 converter 重跑 |
+| `sf-lit convert <key> --reconvert [--force]` | 再跑一次(带 sha256 保险丝) |
+| `sf-lit convert <key> --converted-dir D` | 逃生舱:直接吃已有输出,不启动子进程 |
 
 ### 检索 & 阅读
 
 | 命令 | 作用 |
 |---|---|
-| `litlib search "<query>" [--tag --year --author --has-md --json]` | BM25 + 结构化过滤 |
-| `litlib read <key>` | 打印整篇 `paper.md` |
-| `litlib read <key> --section "3.2"` | 章节抽取(fuzzy 匹配,支持 MinerU + Docling) |
-| `litlib read <key> --pages 3-5` | 按页读(**MinerU-only**) |
-| `litlib read <key> --kind table` | 按 block 类型读(**MinerU-only**) |
-| `litlib read <key> --grep "regex"` | 正则 grep `paper.md` |
-| `litlib show <key>` | 元数据卡片 + MD 状态行 |
-| `litlib status <key>` | 单篇 MD 状态(带 stale 重校验) |
-| `litlib list --md-status absent\|ready\|failed\|stale` | 批量按状态列表 |
+| `sf-lit search "<query>" [--tag --year --author --has-md --json]` | BM25 + 结构化过滤 |
+| `sf-lit read <key>` | 打印整篇 `paper.md` |
+| `sf-lit read <key> --section "3.2"` | 章节抽取(fuzzy 匹配,支持 MinerU + Docling) |
+| `sf-lit read <key> --pages 3-5` | 按页读(**MinerU-only**) |
+| `sf-lit read <key> --kind table` | 按 block 类型读(**MinerU-only**) |
+| `sf-lit read <key> --grep "regex"` | 正则 grep `paper.md` |
+| `sf-lit show <key>` | 元数据卡片 + MD 状态行 |
+| `sf-lit status <key>` | 单篇 MD 状态(带 stale 重校验) |
+| `sf-lit list --md-status absent\|ready\|failed\|stale` | 批量按状态列表 |
 
 ### 关联 & 导出
 
 | 命令 | 作用 |
 |---|---|
-| `litlib tag <key> <name>` | 加/删标签(`--remove`) |
-| `litlib collection <slug> add\|remove <key>` | 集合成员管理 |
-| `litlib note <key> [--append TXT \| --set-from FILE]` | 笔记操作 |
-| `litlib add-github <key> --owner O --repo R [...]` | 挂载 GitHub 仓库 |
-| `litlib add-news <key> --url U [...]` | 挂载新闻/博客链接 |
-| `litlib add-si <key> --path P [--label L]` | 挂载 SI 附件(不进 MD 索引) |
-| `litlib export <selector> --format bibtex\|json` | 引文导出 |
-| `litlib open <key> [pdf\|md\|notes\|si\|si:N\|github\|url]` | 用系统默认程序打开 |
+| `sf-lit tag <key> <name>` | 加/删标签(`--remove`) |
+| `sf-lit collection <slug> add\|remove <key>` | 集合成员管理 |
+| `sf-lit note <key> [--append TXT \| --set-from FILE]` | 笔记操作 |
+| `sf-lit add-github <key> --owner O --repo R [...]` | 挂载 GitHub 仓库 |
+| `sf-lit add-news <key> --url U [...]` | 挂载新闻/博客链接 |
+| `sf-lit add-si <key> --path P [--label L]` | 挂载 SI 附件(不进 MD 索引) |
+| `sf-lit export <selector> --format bibtex\|json` | 引文导出 |
+| `sf-lit open <key> [pdf\|md\|notes\|si\|si:N\|github\|url]` | 用系统默认程序打开 |
 
 ### 运维
 
 | 命令 | 作用 |
 |---|---|
-| `litlib doctor` | 检查环境 + DB + converter 二进制 |
-| `litlib init [--path DIR] [--force]` | 初始化库(幂等) |
-| `litlib rebuild-db` | 从磁盘 sidecar 重建 `index.db`(含 `papers_md`) |
-| `litlib citekey --author X --year Y --title Z` | 预生成 citekey(companion 用) |
-| `litlib config path\|show\|get <key>` | 检查配置 |
+| `sf-lit doctor` | 检查环境 + DB + converter 二进制 |
+| `sf-lit init [--path DIR] [--force]` | 初始化库(幂等) |
+| `sf-lit rebuild-db` | 从磁盘 sidecar 重建 `index.db`(含 `papers_md`) |
+| `sf-lit citekey --author X --year Y --title Z` | 预生成 citekey(companion 用) |
+| `sf-lit config path\|show\|get <key>` | 检查配置 |
 
 ## md_status 状态机
 
 | 状态 | 含义 | 出路 |
 |---|---|---|
-| `absent` | `paper.md` 不存在,没进 FTS。只有元数据可搜。 | `litlib convert <key>` → `ready` |
+| `absent` | `paper.md` 不存在,没进 FTS。只有元数据可搜。 | `sf-lit convert <key>` → `ready` |
 | `ready` | `paper.md` 存在,FTS 索引好。搜索命中。 | `--reconvert` 覆盖;PDF 换了 → `stale` |
-| `failed` | 上次 convert 失败,`md_last_error` 里有原因。 | `litlib convert <key> --reconvert` 重试 |
-| `stale` | PDF sha256 变了(或 `paper.md` 被手删)。搜索仍能命中旧 MD 但 `read` 报警。 | `litlib convert <key> --reconvert` |
+| `failed` | 上次 convert 失败,`md_last_error` 里有原因。 | `sf-lit convert <key> --reconvert` 重试 |
+| `stale` | PDF sha256 变了(或 `paper.md` 被手删)。搜索仍能命中旧 MD 但 `read` 报警。 | `sf-lit convert <key> --reconvert` |
 
 `status <key>` 每次运行都会 stat 磁盘并比对 sha256,自动把 `ready` 降级成 `stale` 并持久化,DB 不撒谎。
 
@@ -137,18 +137,18 @@ library/
 
 1. 一份符合 [`references/ingest-interface.md`](references/ingest-interface.md) 的 metadata JSON
 2. 一个本地 PDF 路径(非零字节)
-3. 可选:一个 citekey 建议(`litlib citekey ...` 预生成)
+3. 可选:一个 citekey 建议(`sf-lit citekey ...` 预生成)
 
 典型 pipeline(假设有 `arxiv-fetch` skill):
 
 ```bash
 arxiv-fetch --id 1706.03762 --emit-json --with-pdf /tmp/paper.pdf \
-  | scripts/litlib add --meta-json - --pdf-path /tmp/paper.pdf --move-pdf --and-convert
+  | scripts/sf-lit add --meta-json - --pdf-path /tmp/paper.pdf --move-pdf --and-convert
 ```
 
 ## 配置
 
-`scripts/litlib config path` 打印当前生效的配置文件位置。查找顺序:
+`scripts/sf-lit config path` 打印当前生效的配置文件位置。查找顺序:
 
 1. `$SCIFORGE_CONFIG`
 2. `./.sciforge.toml`(从 cwd 向 git root 逐层查找)

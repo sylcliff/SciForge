@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 SKILL_ROOT = Path(__file__).parent.parent
-LITLIB = SKILL_ROOT / "scripts" / "litlib"
+LITLIB = SKILL_ROOT / "scripts" / "sf-lit"
 FIXTURES = Path(__file__).parent / "fixtures"
 
 

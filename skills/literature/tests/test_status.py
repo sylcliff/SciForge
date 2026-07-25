@@ -1,4 +1,4 @@
-"""Integration tests for `litlib status`, `litlib list`, `litlib show` MD status."""
+"""Integration tests for `sf-lit status`, `sf-lit list`, `sf-lit show` MD status."""
 
 from __future__ import annotations
 

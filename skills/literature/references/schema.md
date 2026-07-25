@@ -55,10 +55,10 @@ metadata fields. Metadata is still used for **WHERE filters**
 
 | State | Meaning | How to change |
 |---|---|---|
-| `absent` | `paper.md` does not exist; not indexed in `papers_md`. Set at ingest for `add --pdf-path` (without `--and-convert`). | `litlib convert <key>` → `ready` |
+| `absent` | `paper.md` does not exist; not indexed in `papers_md`. Set at ingest for `add --pdf-path` (without `--and-convert`). | `sf-lit convert <key>` → `ready` |
 | `ready` | Canonical `paper.md` exists on disk **and** `papers_md` row present **and** FTS index in sync. Search hits this paper. | Overwritten by `convert --reconvert`, invalidated to `stale` if the PDF changes. |
-| `failed` | Last convert attempt raised. `md_last_error` holds a summary. `papers_md` row **not** written. | `litlib convert <key> --reconvert` |
-| `stale` | Canonical `paper.md` claims to be current but the PDF sha256 in `converter.json` no longer matches (PDF was replaced, or `paper.md` was hand-edited / deleted). Search still returns hits (the FTS row is still there), but `read` and `status` warn. | `litlib convert <key> --reconvert` |
+| `failed` | Last convert attempt raised. `md_last_error` holds a summary. `papers_md` row **not** written. | `sf-lit convert <key> --reconvert` |
+| `stale` | Canonical `paper.md` claims to be current but the PDF sha256 in `converter.json` no longer matches (PDF was replaced, or `paper.md` was hand-edited / deleted). Search still returns hits (the FTS row is still there), but `read` and `status` warn. | `sf-lit convert <key> --reconvert` |
 
 `status`, `list --md-status <state>`, and the `MD:` line in `show <key>`
 are the three ways to inspect this. The `ready` claim is re-validated

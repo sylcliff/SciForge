@@ -4,7 +4,7 @@
 # dependencies = []
 # ///
 
-"""`litlib add` — ingest a paper into the local library.
+"""`sf-lit add` — ingest a paper into the local library.
 
 Scope reminder: this skill does not fetch external data. Companion
 skills (arxiv-fetch, doi-fetch, github-fetch, pdf-extract) are expected
@@ -13,7 +13,7 @@ to hand this skill fully-assembled metadata via one of four entrypoints:
   1. `--meta-json PATH` (or `-` for stdin)     — JSON blob
   2. `--title ... [--author ... --arxiv-id ...]` — CLI flags
   3. `--title ... --manual`                    — placeholder-only entry
-  4. Sidecar direct write + `litlib rebuild-db` — external skill writes
+  4. Sidecar direct write + `sf-lit rebuild-db` — external skill writes
      `library/papers/<citekey>/metadata.json` itself.
 
 All four routes normalize to a single dict, then flow through
@@ -21,7 +21,7 @@ All four routes normalize to a single dict, then flow through
 
 `add` is strictly the **catalog** step: it never runs PDF→Markdown
 conversion. A freshly-added paper's ``md_status`` is ``absent`` — call
-``litlib convert <citekey>`` to render its ``paper.md`` and make it
+``sf-lit convert <citekey>`` to render its ``paper.md`` and make it
 searchable. Pass ``--and-convert`` on ``add`` for the two-step
 convenience shortcut.
 
@@ -243,7 +243,7 @@ def _insert_paper(citekey: str, meta: dict, source: str):
     """Insert into papers + authors + paper_authors within one transaction.
 
     New rows land with ``md_status='absent'`` — a call to
-    ``litlib convert`` is required to render `paper.md` and enable
+    ``sf-lit convert`` is required to render `paper.md` and enable
     full-text search on the body.
     """
     authors = meta.get("authors") or []
@@ -465,7 +465,7 @@ def _do_add(meta: dict, args, lib: Path, source: str) -> int:
             meta["title"] = ""
         else:
             print("error: metadata is missing a non-empty `title`", file=sys.stderr)
-            return 1
+            return 2
 
     # Check duplicate by identifier (arxiv_id / doi / s2)
     existing_key = _find_existing_by_identifier(meta)
@@ -496,7 +496,16 @@ def _do_add(meta: dict, args, lib: Path, source: str) -> int:
         paper_dir = lib / "papers" / existing_key
 
         if pdf_src is not None:
-            new_pdf = _copy_pdf_into_library(pdf_src, paper_dir, move=args.move_pdf)
+            try:
+                new_pdf = _copy_pdf_into_library(pdf_src, paper_dir, move=args.move_pdf)
+            except FileNotFoundError as e:
+                # ADR-0006: missing --pdf-path target → exit 3 (resource not found)
+                print(f"error: {e}", file=sys.stderr)
+                return 3
+            except ValueError as e:
+                # ADR-0006: zero-byte PDF → exit 2 (invalid user input)
+                print(f"error: {e}", file=sys.stderr)
+                return 2
             meta["pdf_path"] = str(new_pdf.relative_to(lib))
 
         # Rewrite sidecar with merged data
@@ -537,12 +546,19 @@ def _do_add(meta: dict, args, lib: Path, source: str) -> int:
         citekey = ids_mod.suffix_for_collision(base, _all_citekeys())
 
     pdf_src = Path(args.pdf_path).expanduser() if args.pdf_path else None
-    meta_written = _write_paper_files(
-        lib, citekey, meta,
-        pdf_src=pdf_src,
-        move_pdf=args.move_pdf,
-        seed_notes=meta.get("notes"),
-    )
+    try:
+        meta_written = _write_paper_files(
+            lib, citekey, meta,
+            pdf_src=pdf_src,
+            move_pdf=args.move_pdf,
+            seed_notes=meta.get("notes"),
+        )
+    except FileNotFoundError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 3
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     _insert_paper(citekey, meta_written, source=source)
 
     if meta.get("tags"):
@@ -559,7 +575,7 @@ def _do_add(meta: dict, args, lib: Path, source: str) -> int:
     print(f"notes={lib / meta_written['notes_path']}")
     print("md_status=absent")
     if meta_written.get("pdf_path"):
-        print(f"hint=run `litlib convert {citekey}` to enable full-text search")
+        print(f"hint=run `sf-lit convert {citekey}` to enable full-text search")
     return 0
 
 
@@ -576,7 +592,7 @@ def run(args) -> int:
                 meta = _load_meta_json(args.meta_json)
             except (OSError, ValueError) as e:
                 print(f"error: {e}", file=sys.stderr)
-                return 1
+                return 2
             source = "meta-json"
         elif args.title:
             meta = _meta_from_args(args)
@@ -586,7 +602,7 @@ def run(args) -> int:
                 "error: one of --meta-json / --title is required",
                 file=sys.stderr,
             )
-            return 1
+            return 2
 
         # Capture the resolved citekey so `--and-convert` can hand it off.
         # We defer conversion until after the DB connection is closed so
@@ -626,18 +642,18 @@ def run(args) -> int:
 
 
 def _spawn_convert(citekey: str, args) -> None:
-    """Run ``litlib convert <citekey>`` as a subprocess (for --and-convert)."""
+    """Run ``sf-lit convert <citekey>`` as a subprocess (for --and-convert)."""
     import subprocess
     here = Path(__file__).parent
-    argv = [sys.executable, str(here / "litlib"), "convert", citekey]
+    argv = [sys.executable, str(here / "sf-lit"), "convert", citekey]
     if getattr(args, "converter", None):
         argv.extend(["--converter", args.converter])
-    print(f"and-convert: running `litlib convert {citekey}`", file=sys.stderr)
+    print(f"and-convert: running `sf-lit convert {citekey}`", file=sys.stderr)
     proc = subprocess.run(argv)
     if proc.returncode != 0:
         print(
             f"and-convert: convert exited {proc.returncode} — "
-            f"catalog entry is fine, retry with `litlib convert {citekey} --reconvert`",
+            f"catalog entry is fine, retry with `sf-lit convert {citekey} --reconvert`",
             file=sys.stderr,
         )
 
@@ -666,7 +682,7 @@ if __name__ == "__main__":
     ap.add_argument("--upsert", action="store_true")
     ap.add_argument(
         "--and-convert", dest="and_convert", action="store_true",
-        help="Run `litlib convert` immediately after ingest (two-phase sugar)",
+        help="Run `sf-lit convert` immediately after ingest (two-phase sugar)",
     )
     ap.add_argument(
         "--converter", choices=["mineru", "docling"], default=None,
