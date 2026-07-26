@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "tomlkit>=0.13",
+#     "httpx>=0.27",
+# ]
+# ///
+
+"""sf-init — CLI entry point for the SciForge init skill.
+
+Modes:
+
+  sf-init                        # interactive wizard (merge mode)
+  sf-init --reset                # ignore existing config, ask everything
+  sf-init doctor                 # health check only
+  sf-init --print-config         # dump current config with secrets redacted
+  sf-init --non-interactive \\
+          --email <e> --library <p> [--converter mineru|docling] ...
+
+See SKILL.md and references/*.md for the full contract.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+# Make `scripts/` importable so `main`, `config_io`, `doctor`, `secrets`,
+# `wizard` resolve as flat modules — same convention as sf-download / sf-lit.
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+
+import main as _main  # noqa: E402
+
+
+if __name__ == "__main__":
+    sys.exit(_main.main())

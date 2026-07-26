@@ -14,3 +14,7 @@ library/
 .vscode/
 .idea/
 *.swp
+
+# SciForge
+.sciforge.toml
+sciforge/
