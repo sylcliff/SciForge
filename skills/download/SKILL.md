@@ -53,9 +53,12 @@ Do **not** invoke this skill for:
 - "Find papers about X" — that's discovery. Use `paperhound` /
   `deep-research` / a future search skill and pipe *their* identifier
   list into `sf-download`.
-- Anything behind an institution's paywall — this skill returns
-  `paywalled` and stops. Use a browser-based skill (or `nature-downloader`)
-  for those.
+- Anything behind an institution's paywall **when no remote fallback is
+  available** — this skill returns `paywalled` and stops. If an
+  SSH-reachable campus server is available, opt in with
+  `--fallback-remote zj` (see [Optional remote
+  fallback](#optional-remote-fallback)); otherwise use a browser-based
+  skill.
 
 ## First-run check
 
@@ -93,6 +96,87 @@ W2741809807                         # OpenAlex work ID
 
 See [references/output-schema.md](references/output-schema.md) for the
 identifier normalization rules and the resulting filename convention.
+
+## Optional remote fallback
+
+Adding `--fallback-remote <backend>` hands off *only* the papers this
+skill couldn't get from public APIs to a companion skill that fetches
+them through an SSH-reachable server on a campus IP.
+
+```bash
+scripts/sf-download 10.1002/anie.202216073 --fallback-remote zj --emit-json
+```
+
+**Currently available backend**: `zj` — SciForge's
+[`skills/remote-paper`](../remote-paper/SKILL.md) driving
+`scansci-pdf` over SSH on `zhaojin.ustc.edu.cn`.
+
+### Routing semantics — API-first, remote-second
+
+This is *not* "look up whether the DOI is OA and pick a lane". Every
+DOI still goes through the 5-API round first:
+
+```
+for each identifier:
+  1. Query arXiv / Crossref / Unpaywall / OpenAlex / S2 concurrently
+  2. If any legal source returns a working PDF → status=downloaded (local)
+  3. Else if --fallback-remote <name> is set:
+        call skills/remote-paper/scripts/fetch.sh --backend <name>
+        if success → status=downloaded, source_used=remote:<name>
+        if failure → keep the original diagnostic status, note the attempt
+  4. Else → return the diagnostic status (paywalled / pdf_link_broken / …)
+```
+
+Consequences worth internalising:
+
+- **OA papers never touch the remote.** Free arXiv preprints, Nature
+  Comms, PLOS, etc. always come from the local API round because step
+  2 wins. A hybrid-journal article that happens to be gold-OA is
+  handled locally too — no static publisher whitelist / blacklist to
+  keep in sync.
+- **The remote is invoked at most once per paper.** It only runs when
+  every OA API has already declined or given a broken link.
+- **Not every diagnostic status triggers the remote.** `paywalled`,
+  `pdf_link_broken`, `metadata_only`, and `identifier_not_found` do
+  (they mean the paper likely exists and a campus IP might succeed).
+  `network_error` and `rate_limited` do **not** — those signal a
+  local-side transient problem that the remote server can't rescue.
+- **Failure is soft.** If the remote also can't get the PDF, the paper
+  keeps its original OA-side status (`paywalled` etc.) and
+  `sources_queried` gains a `remote:<name>(failed)` marker so the
+  NDJSON reflects what actually ran.
+
+### Requirements
+
+- The named backend script must exist at
+  `<sciforge-root>/skills/remote-paper/scripts/fetch.sh` (which it does
+  by default). No absolute paths — the module walks up from
+  `remote_fallback.py` to find the repo root.
+- On Windows, Git Bash (`C:\Program Files\Git\usr\bin\bash.exe`) must
+  be installed and reachable; the loader deliberately avoids the WSL
+  bash shim in `System32` because it can't see the Windows filesystem.
+- The backend's own preconditions still apply. For `zj`: an SSH host
+  alias, and a one-time `bash skills/remote-paper/scripts/ensure_setup.sh
+  --backend zj` per session to verify the server-side environment.
+
+### Success NDJSON shape
+
+A paper that came back via the remote gets these two fields:
+
+```json
+{
+  "status": "downloaded",
+  "source_used": "remote:zj",
+  "sources_queried": ["crossref", "unpaywall", "semanticscholar",
+                      "openalex", "remote:zj"],
+  "pdf_path": "D:\\zj_papers\\Dong2023_Isomeric.pdf",
+  "bytes": 3626738,
+  "meta": { ... }
+}
+```
+
+Downstream consumers (e.g. `sf-lit add --meta-json -`) treat
+`source_used=remote:<backend>` the same as any other `downloaded` line.
 
 ## Output
 

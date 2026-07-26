@@ -30,6 +30,7 @@ import httpx
 from config import load_config
 from fetch import fetch_one
 from output import PaperResult, Status, Summary
+from remote_fallback import known_backend, list_backends
 import doctor as doctor_mod
 
 
@@ -72,6 +73,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--emit-json",
         action="store_true",
         help="Emit machine-readable NDJSON (default: still one JSON line per paper — kept for parity with fetch skills).",
+    )
+    p.add_argument(
+        "--fallback-remote",
+        metavar="BACKEND",
+        default=None,
+        help=(
+            "When a paper is paywalled (or would otherwise return without a PDF), "
+            "hand it off to skills/remote-paper with the given backend. "
+            f"Available: {', '.join(list_backends())}."
+        ),
     )
     p.add_argument(
         "--doctor",
@@ -139,6 +150,7 @@ async def _run_all(
     treat_as_title: bool,
     out_dir: Path,
     cfg,
+    fallback_remote: str | None,
 ) -> tuple[list[PaperResult], list[str]]:
     """Kick off all identifiers with a shared client + concurrency limit.
 
@@ -155,7 +167,15 @@ async def _run_all(
         async def one(raw: str, idx: int) -> PaperResult:
             nonlocal saw_s2_429
             async with sem:
-                result = await fetch_one(raw, idx, cfg, out_dir, client, treat_as_title=treat_as_title)
+                result = await fetch_one(
+                    raw,
+                    idx,
+                    cfg,
+                    out_dir,
+                    client,
+                    treat_as_title=treat_as_title,
+                    fallback_remote=fallback_remote,
+                )
             # Flush this line as soon as it's ready.
             _print_json_line(result.to_ndjson())
             if result.status == Status.RATE_LIMITED and "semanticscholar" in (result.sources_queried or []):
@@ -238,9 +258,20 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = Path(args.out).expanduser().resolve() if args.out else cfg.resolved_download_dir
     treat_as_title = bool(args.title)
 
+    fallback_remote: str | None = args.fallback_remote
+    if fallback_remote is not None and not known_backend(fallback_remote):
+        print(
+            f"sf-download: unknown --fallback-remote value '{fallback_remote}' "
+            f"(available: {', '.join(list_backends())})",
+            file=sys.stderr,
+        )
+        return 2
+
     t0 = time.monotonic()
     try:
-        results, warnings = asyncio.run(_run_all(identifiers, treat_as_title, out_dir, cfg))
+        results, warnings = asyncio.run(
+            _run_all(identifiers, treat_as_title, out_dir, cfg, fallback_remote)
+        )
     except KeyboardInterrupt:
         print("sf-download: interrupted", file=sys.stderr)
         return 130

@@ -24,6 +24,7 @@ from config import DownloadConfig
 from identifiers import IdKind, NormalizedId, normalize, safe_filename
 from output import Candidate, Meta, PaperResult, PdfAttempt, Status
 from pdf import cached_ok, try_download
+from remote_fallback import fetch_via_remote
 from sources import SourceResult
 from sources import arxiv as arxiv_src
 from sources import crossref as crossref_src
@@ -45,6 +46,7 @@ async def fetch_one(
     client: httpx.AsyncClient,
     *,
     treat_as_title: bool = False,
+    fallback_remote: str | None = None,
 ) -> PaperResult:
     """Resolve one identifier, run fallback, download PDF, return one line."""
 
@@ -52,7 +54,9 @@ async def fetch_one(
     # 0. Normalize identifier — or route to title fallback.
     # ------------------------------------------------------------------ #
     if treat_as_title:
-        return await _fetch_by_title(identifier_raw, index, cfg, out_dir, client)
+        return await _fetch_by_title(
+            identifier_raw, index, cfg, out_dir, client, fallback_remote=fallback_remote
+        )
 
     try:
         nid = normalize(identifier_raw)
@@ -64,7 +68,9 @@ async def fetch_one(
         # However, an empty string or something clearly non-title stays
         # invalid.
         if identifier_raw.strip() and len(identifier_raw.strip()) >= 10:
-            return await _fetch_by_title(identifier_raw, index, cfg, out_dir, client)
+            return await _fetch_by_title(
+                identifier_raw, index, cfg, out_dir, client, fallback_remote=fallback_remote
+            )
         return _mk_invalid_input(index, identifier_raw)
 
     # ------------------------------------------------------------------ #
@@ -120,16 +126,12 @@ async def fetch_one(
         )
 
     # No PDF was saved. Distinguish four failure kinds:
-    if _all_not_found(results):
-        return PaperResult(
-            index=index,
-            identifier=identifier_raw,
-            status=Status.IDENTIFIER_NOT_FOUND,
-            pdf_path=None,
-            sources_queried=sources_queried,
-            meta=None,
-        )
-
+    #
+    # NOTE on remote fallback: we try the remote *after* the sub-status is
+    # picked, so a downloaded PDF from the remote wins over any OA-side
+    # diagnosis. The exception is `network_error` and `rate_limited`, which
+    # signal a transient local problem — hitting the remote server won't help
+    # (and might mask a real issue).
     if _all_transport_failed(results):
         return PaperResult(
             index=index,
@@ -146,6 +148,37 @@ async def fetch_one(
             status=Status.RATE_LIMITED,
             sources_queried=sources_queried,
             meta=meta,
+        )
+
+    # Remote fallback runs here — covers paywalled, pdf_link_broken,
+    # metadata_only, *and* identifier_not_found. Cold Wiley/ACS DOIs
+    # sometimes miss all 4 OA APIs entirely, and the remote server's
+    # scansci-pdf is a valid last resort.
+    if fallback_remote is not None:
+        remote_id = _remote_identifier(nid, meta)
+        if remote_id is not None:
+            remote = await asyncio.to_thread(fetch_via_remote, remote_id, fallback_remote)
+            if remote.ok:
+                return PaperResult(
+                    index=index,
+                    identifier=identifier_raw,
+                    status=Status.DOWNLOADED,
+                    pdf_path=remote.pdf_path,
+                    source_used=f"remote:{fallback_remote}",
+                    sources_queried=sources_queried + [f"remote:{fallback_remote}"],
+                    bytes=remote.bytes,
+                    meta=meta,
+                )
+            sources_queried = sources_queried + [f"remote:{fallback_remote}(failed)"]
+
+    if _all_not_found(results):
+        return PaperResult(
+            index=index,
+            identifier=identifier_raw,
+            status=Status.IDENTIFIER_NOT_FOUND,
+            pdf_path=None,
+            sources_queried=sources_queried,
+            meta=None,
         )
 
     # Unpaywall said closed-access — that dominates metadata_only.
@@ -201,6 +234,8 @@ async def _fetch_by_title(
     cfg: DownloadConfig,
     out_dir: Path,
     client: httpx.AsyncClient,
+    *,
+    fallback_remote: str | None = None,
 ) -> PaperResult:
     """--title path: strict top-1 match → recurse via resolved DOI/arxiv."""
     search = await _with_retries(
@@ -229,12 +264,16 @@ async def _fetch_by_title(
         )
 
     if search.resolved_doi:
-        inner = await fetch_one(search.resolved_doi, index, cfg, out_dir, client)
+        inner = await fetch_one(
+            search.resolved_doi, index, cfg, out_dir, client, fallback_remote=fallback_remote
+        )
         # Preserve original identifier as user typed it.
         inner.identifier = title
         return inner
     if search.resolved_arxiv_id:
-        inner = await fetch_one(search.resolved_arxiv_id, index, cfg, out_dir, client)
+        inner = await fetch_one(
+            search.resolved_arxiv_id, index, cfg, out_dir, client, fallback_remote=fallback_remote
+        )
         inner.identifier = title
         return inner
 
@@ -506,6 +545,31 @@ def _mk_invalid_input(index: int, identifier_raw: str) -> PaperResult:
         identifier=identifier_raw,
         status=Status.INVALID_INPUT,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Remote-fallback identifier picking
+# --------------------------------------------------------------------------- #
+
+
+def _remote_identifier(nid: NormalizedId, meta: Optional[Meta]) -> Optional[str]:
+    """Pick the best identifier to hand to `remote-paper` for this paper.
+
+    Priority: original DOI-form ID > DOI discovered via metadata union >
+    original arXiv ID > arXiv ID discovered via metadata union. Anything
+    else (OpenAlex work ID / S2 hash) is not accepted by scansci-pdf, so
+    we bail with None in those cases when no DOI or arXiv-id could be
+    resolved.
+    """
+    if nid.kind == IdKind.DOI:
+        return nid.value
+    if meta is not None and meta.doi:
+        return meta.doi
+    if nid.kind == IdKind.ARXIV:
+        return nid.value
+    if meta is not None and meta.arxiv_id:
+        return meta.arxiv_id
+    return None
 
 
 __all__ = ["fetch_one"]
