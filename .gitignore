@@ -21,3 +21,4 @@ experiments/
 # SciForge
 .sciforge.toml
 sciforge/
+.claude/

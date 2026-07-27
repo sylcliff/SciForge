@@ -104,22 +104,35 @@ git clone https://github.com/sylcliff/SciForge.git
 cd SciForge
 ```
 
-### 3. Wire it into your agent
+### 3. Install into your project
 
-For **Claude Code**:
-
-```bash
-# Copy (or symlink) SciForge's skills and settings into your project
-cp -r sciforge/.claude /path/to/your/research/project/
-```
-
-For **Codex / Cursor / Aider**:
+From the SciForge repo, run the installer pointing at your research project:
 
 ```bash
-cp sciforge/AGENTS.md /path/to/your/research/project/
+# cd to your research project, then:
+bash /path/to/SciForge/install.sh            # Linux / macOS / Git Bash
+# or
+pwsh /path/to/SciForge/install.ps1           # Windows PowerShell
 ```
 
-Then just talk to your agent as usual — SciForge's skills and workflows will be discoverable.
+The installer copies each skill directory into `.claude/skills/` (Claude Code
+auto-discovers these) and writes an `AGENTS.md` (Codex CLI reads this).
+
+| Flag | What it does |
+|------|-------------|
+| _(none)_ | Install into the current directory (project-level) |
+| `-t /path` | Install into a specific directory |
+| `--global` | Install user-level (`~/.claude/skills/`, `~/.codex/AGENTS.md`) |
+| `-f` / `--force` | Overwrite existing files without prompting |
+
+Then just talk to your agent as usual — skills and workflows are discoverable.
+
+#### First-time setup
+
+```bash
+.claude/skills/init/scripts/sf-init doctor    # check your environment
+.claude/skills/init/scripts/sf-init           # set up API keys & library path
+```
 
 ### 4. Try a workflow
 
@@ -130,8 +143,8 @@ Ask your agent:
 ## 🗺️ Roadmap
 
 - [ ] Core skill pack (literature, analysis, figures, writing)
-- [ ] Claude Code integration (`.claude/skills/`, hooks, subagents)
-- [ ] Codex CLI integration (`AGENTS.md` preset)
+- [x] Claude Code integration (`.claude/skills/`, install script, hooks)
+- [x] Codex CLI integration (`AGENTS.md` preset, install script)
 - [ ] Cursor / Aider presets
 - [ ] MCP server for arXiv / PubMed / Semantic Scholar
 - [ ] MCP server for Zotero / BibTeX
