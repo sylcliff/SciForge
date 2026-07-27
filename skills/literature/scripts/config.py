@@ -20,6 +20,7 @@ Usage:
 
 import os
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 DEFAULT_CONFIG = {
@@ -129,6 +130,7 @@ def _merge_toml_into_defaults(overrides: dict) -> dict:
     return result
 
 
+@lru_cache(maxsize=1)
 def load_config() -> dict:
     """Load and merge config from file + defaults. Returns dict."""
     config_path = _find_config()

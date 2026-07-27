@@ -42,11 +42,11 @@ def _sha256(path: Path) -> str:
 
 
 def _resolve_key(key: str) -> dict | None:
-    for field in ("citekey", "arxiv_id", "doi"):
-        row = dbmod.fetchone(f"SELECT * FROM papers WHERE {field} = ?", (key,))
-        if row:
-            return dict(row)
-    return None
+    row = dbmod.fetchone(
+        "SELECT * FROM papers WHERE citekey = ? OR arxiv_id = ? OR doi = ? LIMIT 1",
+        (key, key, key),
+    )
+    return dict(row) if row else None
 
 
 def _paper_dir(lib: Path, citekey: str) -> Path:
@@ -90,7 +90,12 @@ def _revalidate(paper: dict, lib: Path) -> tuple[str, dict]:
             recorded = sidecar.get("pdf_sha256")
             if recorded:
                 try:
-                    actual = _sha256(pdf)
+                    stat = pdf.stat()
+                    unchanged = (
+                        sidecar.get("pdf_size") == stat.st_size
+                        and sidecar.get("pdf_mtime_ns") == stat.st_mtime_ns
+                    )
+                    actual = recorded if unchanged else _sha256(pdf)
                 except OSError:
                     actual = None
                 if actual and actual != recorded:

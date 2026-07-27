@@ -171,7 +171,7 @@ pip install pytest
 pytest tests/                     # 101 tests, ~65s
 ```
 
-测试用 `tests/fixtures/fake_mineru.py` 和 `fake_docling.py` 作为 converter stub,不需要真装 MinerU/Docling 就能跑集成测试。真 converter 的验证走 SKILL.md 底部的 verification block(手动执行)。
+测试用 `tests/fixtures/fake_mineru.py` 和 `fake_docling.py` 作为 converter stub,不需要真装 MinerU/Docling 就能跑集成测试。真 converter 可按上面的快速上手流程手动验证。
 
 ## 参考文档
 

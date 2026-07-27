@@ -35,6 +35,23 @@ def test_status_after_convert_is_ready(run, libenv):
     assert kv["pdf_sha256"]
 
 
+def test_status_skips_hash_when_pdf_stat_is_unchanged(run, libenv, monkeypatch):
+    ck = _add_and_convert(run, libenv)
+    import status
+    monkeypatch.setattr(status, "_sha256", lambda _path: (_ for _ in ()).throw(
+        AssertionError("unchanged PDF should not be re-hashed")
+    ))
+    lib, _ = libenv
+    import db as dbmod
+    dbmod.connect(lib / "index.db")
+    try:
+        row = dbmod.fetchone("SELECT * FROM papers WHERE citekey = ?", (ck,))
+        effective, _ = status._revalidate(dict(row), lib)
+    finally:
+        dbmod.close()
+    assert effective == "ready"
+
+
 def test_status_absent_before_convert(run, libenv):
     lib, _ = libenv
     p = make_pdf(lib.parent / "b.pdf")

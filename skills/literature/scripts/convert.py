@@ -72,11 +72,11 @@ def _normalize_text(raw: bytes) -> str:
 
 
 def _resolve_key(key: str) -> dict | None:
-    for field in ("citekey", "arxiv_id", "doi"):
-        row = dbmod.fetchone(f"SELECT * FROM papers WHERE {field} = ?", (key,))
-        if row:
-            return dict(row)
-    return None
+    row = dbmod.fetchone(
+        "SELECT * FROM papers WHERE citekey = ? OR arxiv_id = ? OR doi = ? LIMIT 1",
+        (key, key, key),
+    )
+    return dict(row) if row else None
 
 
 def _paper_dir(lib: Path, citekey: str) -> Path:
@@ -324,8 +324,13 @@ def _run(args, lib: Path) -> int:
         return 2
 
     pdf_sha = _sha256(pdf_path)
-    argv_probe = config_mod.get_converter_command(converter) or [converter]
-    version = _converter_version(argv_probe)
+    # Imported output has no local converter process to probe. Avoid launching
+    # a potentially heavy Python CLI solely to ask for its version.
+    if args.converted_dir:
+        version = _load_sidecar(paper_dir).get("converter_version")
+    else:
+        argv_probe = config_mod.get_converter_command(converter) or [converter]
+        version = _converter_version(argv_probe)
 
     # Fuse: same PDF, same converter, same version already promoted → no-op.
     if args.reconvert and not args.force:
@@ -373,11 +378,14 @@ def _run(args, lib: Path) -> int:
 
     try:
         top_md = _promote_canonical(md_src, paper_dir)
+        pdf_stat = pdf_path.stat()
         _save_sidecar(paper_dir, {
             "converter": converter,
             "converter_version": version,
             "converted_at": started,
             "pdf_sha256": pdf_sha,
+            "pdf_size": pdf_stat.st_size,
+            "pdf_mtime_ns": pdf_stat.st_mtime_ns,
             "source_md": str(md_src.relative_to(paper_dir)),
         })
         chars = _ingest_md(citekey, top_md, converter, version, pdf_sha)

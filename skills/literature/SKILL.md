@@ -1,301 +1,128 @@
 ---
 name: literature
-description: Use when the user wants to manage the local scientific library — cataloguing a paper from prepared metadata + a local PDF, converting the PDF to searchable Markdown via MinerU or Docling, and searching / reading the resulting text. External metadata fetching lives in companion skills.
+description: "Manage a local scientific library: catalog prepared metadata and PDFs, convert PDFs to searchable Markdown, search or read saved papers, and maintain citations or attachments. Use only after external fetch skills have produced local inputs."
 ---
 
-# Literature — local library data management
+# Literature
 
-Manages a personal, PDF-backed library of scientific papers with a
-SQLite index and **paper-level full-text search over Markdown** rendered
-from each PDF. **Scope: local data management only.** External data
-fetching (arXiv, DOI, GitHub, news search) is handled by separate
-companion skills that hand pre-assembled metadata to this one.
+Use `./scripts/sf-lit` to manage the local PDF-backed SQLite library. This
+skill is **local-only**: fetching metadata or PDFs belongs to companion
+skills, which hand this skill prepared JSON and a local PDF path.
 
-## Two-phase ingest
+## Fast path
 
-Every paper flows through two commands:
+Run the narrowest command that completes the request. Do not run `doctor`,
+`status`, or `show` before a normal command; commands validate their own
+inputs. Run `doctor` only for setup or converter diagnosis, and `init` only
+when a command reports that the library is missing.
 
-1. **`sf-lit add`** — catalog step. Copies the PDF into the library,
-   writes `metadata.json`, inserts a row with `md_status='absent'`. Fast.
-2. **`sf-lit convert`** — MD step. Spawns MinerU (default) or Docling to
-   render `paper.md`, promotes it as canonical, and indexes it into the
-   FTS store. Synchronous; can take minutes on CPU. `md_status` becomes
-   `ready` on success.
-
-The two-in-one shortcut is `add --and-convert`.
-
-## When to invoke
-
-- User wants to **save** a paper for which metadata is already in hand
-  (a JSON blob or explicit field values) plus a local PDF
-- User wants to **render** an added paper's PDF to searchable Markdown
-- User wants to **manage** existing entries — tag, note, collection,
-  attach a GitHub repo / news link / SI file
-- User wants to **search** the library — full-text over `paper.md`,
-  structured filters (year / tag / author / has-md), or list papers
-  by MD status
-- User wants to **read** a specific paper — whole, by section, by
-  page (MinerU), by block kind (MinerU), or via regex grep
-- User wants to **cite** what is saved — `export` to BibTeX or JSON
-
-Do NOT invoke this skill to fetch something the user hasn't already
-provided. For "save arXiv paper 1706.03762", the agent should first
-invoke `arxiv-fetch` (or the equivalent) to pull metadata + download the
-PDF, then pipe its output into `sf-lit add --meta-json -`.
-
-## First-run check
+Keep cataloguing and conversion separate unless the user requests both:
 
 ```bash
-scripts/sf-lit doctor            # verify env + DB + converter binaries
-scripts/sf-lit init              # only if doctor says the library is missing
+./scripts/sf-lit add --meta-json META.json --pdf-path PAPER.pdf
+./scripts/sf-lit convert CITEKEY
 ```
 
-`init` is idempotent.
+`add` is fast and produces `md_status=absent`. `convert` invokes MinerU or
+Docling synchronously and may take minutes. `add --and-convert` is the
+explicit combined path.
 
-## Ingest — four entry points
+## Route the request
 
-External skills (or the user directly) route into the catalog through:
-
-| Caller has | Command |
+| Intent | Command |
 |---|---|
-| A metadata JSON blob + PDF | `scripts/sf-lit add --meta-json <path or -> --pdf-path P` |
-| Explicit fields + PDF | `scripts/sf-lit add --title "..." [--author X --year Y ...] --pdf-path P` |
-| Minimal info (fill in later) | `scripts/sf-lit add --title "..." --manual` |
-| A pre-written `metadata.json` under `library/papers/<key>/` | `scripts/sf-lit rebuild-db` |
+| Add prepared JSON + PDF | `./scripts/sf-lit add --meta-json PATH_OR_- --pdf-path P` |
+| Add explicit fields + PDF | `./scripts/sf-lit add --title T --author A --year Y --pdf-path P` |
+| Add placeholder without PDF | `./scripts/sf-lit add --title T --manual` |
+| Convert an added paper | `./scripts/sf-lit convert KEY [--converter mineru\|docling]` |
+| Import existing converter output | `./scripts/sf-lit convert KEY --converted-dir DIR` |
+| Full-text or filtered search | `./scripts/sf-lit search [QUERY] [--tag T --year Y-Y --author A --has-md]` |
+| Read whole paper | `./scripts/sf-lit read KEY` |
+| Read a section | `./scripts/sf-lit read KEY --section S` |
+| Read MinerU pages or blocks | `./scripts/sf-lit read KEY --pages 3-5` / `--kind table` |
+| Regex search within one paper | `./scripts/sf-lit read KEY --grep RE` |
+| Inspect one record or MD state | `./scripts/sf-lit show KEY` / `status KEY` |
+| List conversion state | `./scripts/sf-lit list --md-status absent\|ready\|failed\|stale` |
+| Export citations | `./scripts/sf-lit export SELECTOR --format bibtex\|json` |
+| Maintain tags, collections, notes, or attachments | `./scripts/sf-lit tag\|collection\|note\|add-github\|add-news\|add-si ...` |
+| Open a saved target | `./scripts/sf-lit open KEY [pdf\|md\|notes\|si:N\|github\|url]` |
 
-The PDF is **copied** by default; `--move-pdf` moves it. `--upsert`
-merges non-empty fields (list fields — tags, collections, authors,
-github, news, si — union).
+Use `--json` only when structured output is needed for another step. Avoid
+dumping a whole paper when a section, page range, block kind, or grep answers
+the request.
 
-Then convert:
+## Ingest contract
 
-```bash
-scripts/sf-lit convert <citekey>                  # spawn MinerU
-scripts/sf-lit convert <citekey> --converter docling
-scripts/sf-lit convert <citekey> --reconvert      # re-render
-scripts/sf-lit convert <citekey> --reconvert --force   # bypass sha256 fuse
-scripts/sf-lit convert <citekey> --converted-dir DIR   # skip converter; ingest existing output
-```
+External fetch skills must provide:
 
-## Companion contract
+1. Metadata matching [the ingest interface](./references/ingest-interface.md).
+2. A non-empty local PDF, unless the user explicitly wants `--manual`.
+3. Optionally, a citekey generated with `sf-lit citekey ...`.
 
-External fetch skills produce three things:
+When the source is an arXiv ID, DOI, URL, or other remote identifier, run the
+appropriate fetch skill first. Do not make network requests from this skill.
 
-1. Metadata JSON matching `references/ingest-interface.md`.
-2. A local PDF path (non-zero-byte). Required unless the caller
-   explicitly uses `--manual`.
-3. Optional: a suggested citekey (precomputed via `sf-lit citekey ...`).
+`add` copies the PDF by default; `--move-pdf` transfers it. A duplicate
+`arxiv_id`, DOI, Semantic Scholar ID, or citekey exits `2` and prints the
+existing citekey. Use `--upsert` only when merging into that record is intended.
 
-Example one-liner (assumes `arxiv-fetch` exists):
+## Conversion contract
 
-```bash
-arxiv-fetch --id 1706.03762 --emit-json --with-pdf /tmp/paper.pdf \
-  | scripts/sf-lit add --meta-json - --pdf-path /tmp/paper.pdf --move-pdf --and-convert
-```
+- A bare `convert` refuses a paper already marked `ready`.
+- `--reconvert` retries or rerenders; unchanged PDF + converter + version is a
+  fast no-op. Add `--force` only when a real rerun is intended.
+- `--converted-dir DIR` imports output already produced elsewhere and avoids
+  launching a converter.
+- Each paper has one canonical `paper.md`; switching converters preserves both
+  converter output trees and changes the canonical copy.
+- SI attachments are never converted or indexed. Add an SI PDF as a separate
+  paper when it must be searchable.
 
-## Routing
+Conversion is complete only when the command exits `0` and prints
+`md_status=ready` or `action=noop`. On failure, report the converter error and
+leave the persisted `failed` state intact for diagnosis.
 
-**Ingest & convert:**
+## State and completion
 
-| User asks for | Command |
-|---|---|
-| Save with CLI fields | `scripts/sf-lit add --title "..." --author ... --pdf-path P` |
-| Save from JSON | `scripts/sf-lit add --meta-json <path or -> --pdf-path P` |
-| Save + convert in one step | append `--and-convert` |
-| Save from arXiv / DOI link | **First run a fetch skill**, then pipe |
-| Render an added paper to MD | `scripts/sf-lit convert <key>` |
-| Re-render (new MinerU / different converter) | `scripts/sf-lit convert <key> --reconvert [--force] [--converter docling]` |
+`absent` means metadata exists but full text is not searchable; `ready` means
+canonical Markdown is indexed; `failed` records the last conversion error;
+`stale` means the PDF or Markdown no longer matches the recorded conversion.
 
-**Search / read / manage:**
+Finish only when the requested mutation or query command exits `0` and its
+output identifies the affected citekey(s) or requested results. Do not add a
+second verification command unless the first command's output is insufficient
+or the user asked for verification.
 
-| User asks for | Command |
-|---|---|
-| Full-text search | `scripts/sf-lit search "<query>" [--tag --year --author --has-md]` |
-| List by MD status | `scripts/sf-lit list --md-status absent\|ready\|failed\|stale` |
-| Read a paper (whole) | `scripts/sf-lit read <key>` |
-| Read a section | `scripts/sf-lit read <key> --section "Methods"` |
-| Read specific pages (MinerU) | `scripts/sf-lit read <key> --pages 3-5` |
-| Read blocks by kind (MinerU) | `scripts/sf-lit read <key> --kind table\|equation\|image_caption` |
-| Grep the MD | `scripts/sf-lit read <key> --grep "regex"` |
-| Show one paper's metadata card | `scripts/sf-lit show <key>` |
-| Check MD state | `scripts/sf-lit status <key>` |
-| Cite | `scripts/sf-lit export <selector> --format bibtex` |
-| Open PDF / MD / notes / repo | `scripts/sf-lit open <key> [pdf\|md\|notes\|si\|si:N\|github\|url]` |
-| Tag / collection / note | `scripts/sf-lit tag / collection / note` |
-| Attach a GitHub repo | `scripts/sf-lit add-github <key> --owner O --repo R` |
-| Attach a news link | `scripts/sf-lit add-news <key> --url U [--kind blog]` |
-| Attach an SI file | `scripts/sf-lit add-si <key> --path P` |
+## Output contract
 
-## Interaction rules
+Exit `0` means success, `2` invalid input, `3` missing resource, `4` a
+destructive action refused without `--force`, and `1` or `>=64` a runtime
+failure. Human-readable output is the default; use supported `--json` flags for
+machine handoffs.
 
-- **Two-phase.** `add` never runs MinerU/Docling. `convert` is a
-  separate, explicit action. `add --and-convert` chains them.
-- **Duplicate detection.** If an incoming paper's `arxiv_id`, `doi`,
-  `s2_paper_id`, or explicit `citekey` already exists, `add` exits 2
-  and prints the existing citekey. Pass `--upsert` to merge instead.
-- **Reconvert fuse.** `convert --reconvert` on unchanged PDF + same
-  converter + same version prints `action=noop` and exits 0. Pass
-  `--force` to bypass.
-- **Converter is per-paper.** Every paper is rendered by exactly one
-  converter at a time; the choice is recorded in
-  `library/papers/<key>/converter.json`. Switching converters writes
-  a new output tree alongside the old one and swaps the canonical
-  `paper.md`.
-- **SI never runs through the converter.** `add-si` copies files as
-  attachments; they are not part of `paper.md` and are not searchable
-  by `search` / `read`. To make an SI PDF searchable, add it as a
-  separate paper.
-- **Overwrite guard.** `add-si` copies into the library; it never
-  overwrites `paper.pdf` or the sidecar. To attach a replacement PDF,
-  use `add --pdf-path P --upsert` followed by `convert --reconvert`.
-- **PDF integrity.** `--pdf-path` rejects missing or zero-byte files.
-
-## `md_status`
-
-| State | Meaning |
-|---|---|
-| `absent` | No `paper.md` on disk; only metadata is indexed. Search cannot reach the body. |
-| `ready` | `paper.md` exists and is in the FTS index. |
-| `failed` | Last `convert` failed; `md_last_error` holds the reason. Retry with `convert --reconvert`. |
-| `stale` | PDF changed since the last convert (or `paper.md` was hand-deleted). Search still hits the old MD; fix with `convert --reconvert`. |
-
-`status <key>` re-validates the on-disk state each call — if the DB
-claims `ready` but `paper.md` is missing, or the PDF sha256 no longer
-matches `converter.json`, it downgrades to `stale` and persists.
-
-## Output rules
-
-`add` prints machine-readable lines for programmatic use:
-
-```
-citekey=<key>
-pdf=<absolute path or "(not provided)">
-notes=<absolute path>
-md_status=absent
-hint=run `sf-lit convert <key>` to enable full-text search
-```
-
-`convert` prints:
-
-```
-citekey=<key>
-converter=mineru|docling
-converter_version=<string>
-md=<absolute path to paper.md>
-chars=<int>
-md_status=ready
-```
-
-Or `action=noop` when the fuse trips.
-
-`search` prints a compact table (or `--json` for structured output with
-`score`, `snippet`, `has_md`, `md_status`). `read` prints the requested
-slice or, with `--json`, always returns an array (even for 0 or 1 hits).
-`show` renders a markdown card with a `**md:** <state>` line.
-
-## SciForge URI namespace
-
-This skill owns `sciforge://literature/<citekey>`. `sf-lit show <key>
---json` is the resolver: it always emits `id`, `type`, and `uri` fields
-per [ADR-0006](../../docs/adr/0006-minimum-output-contract.md):
+This domain skill owns `sciforge://literature/<citekey>`. Resolve it with
+`./scripts/sf-lit show KEY --json`, which returns at least:
 
 ```json
-{
-  "id": "vaswani2017attention",
-  "type": "paper",
-  "uri": "sciforge://literature/vaswani2017attention",
-  "citekey": "vaswani2017attention",
-  "title": "Attention Is All You Need",
-  "...": "..."
-}
+{"id":"KEY","type":"paper","uri":"sciforge://literature/KEY"}
 ```
 
-Cross-skill references to a paper use the `uri` value; resolution is
-lazy (see [ADR-0003](../../docs/adr/0003-uri-cross-skill-refs-lazy.md)).
+`library/papers/<citekey>/metadata.json`, `paper.md`, and `converter.json` are
+the durable record; `library/index.db` is rebuildable with `rebuild-db`.
 
-## Exit codes
+## References
 
-Every `sf-lit` subcommand follows the SciForge minimum contract
-([ADR-0006](../../docs/adr/0006-minimum-output-contract.md)):
+Load only the reference needed by the active branch:
 
-| Code | Meaning | Examples |
-|---|---|---|
-| `0` | Success | `add`, `search`, `show`, `read` all completed |
-| `2` | Invalid user input | Bad `--meta-json`, missing `--title`, unknown `--converter`, `--section` + `--pages` combined, zero-byte PDF, unknown associate verb, duplicate without `--upsert` |
-| `3` | Resource not found | Unknown citekey, `--pdf-path` at nonexistent file, library not yet `init`ed, MinerU `_content_list.json` missing, no rows match export selector, `open` target absent |
-| `4` | Destructive refused (unused today) | Reserved. Currently `convert --reconvert` on an unchanged input is a no-op with exit `0`; passing `--force` to bypass the sha256 fuse remains a destructive op. |
-| `1`, `≥64` | Runtime error | Converter subprocess crashed, I/O error, uncaught exception |
+- Metadata fields and companion handoff:
+  [references/ingest-interface.md](./references/ingest-interface.md)
+- Configuration and converter commands:
+  [references/config.md](./references/config.md)
+- Detailed examples and bulk workflows:
+  [references/recipes.md](./references/recipes.md)
+- Database or status internals:
+  [references/schema.md](./references/schema.md)
+- BibTeX mapping and citekey rules:
+  [references/bibtex.md](./references/bibtex.md)
 
-## Search & read semantics
-
-- **Ranking**: BM25 over `papers_md_fts` only (Q12/A). Score returned as
-  "larger is better" (SQLite's raw BM25 is reversed).
-- **Structured filters**: `--year`, `--tag`, `--author`, `--collection`,
-  `--has-pdf`, `--has-md` are pure WHERE clauses and do not influence
-  ranking.
-- **No content in the FTS index** for papers with `md_status='absent'` —
-  they can only be found via structured filters or `show`.
-- **Tokenizer**: `porter unicode61 remove_diacritics 2`. English stems
-  merge (`network` = `networks`); non-Latin scripts fall back to
-  character-level indexing.
-- **Section extraction** (`read --section`): fuzzy substring match
-  (token-level, diacritic-folded) over headings. Works for MinerU
-  (with page numbers) and Docling (headings parsed from markdown).
-  Always returns an array — 0, 1, or N sections.
-- **`--pages` / `--kind`**: MinerU-only; Docling papers get a clear
-  error telling the caller to use `--section` instead.
-
-## Reference documents
-
-Read on demand:
-
-- [references/schema.md](references/schema.md) — SQLite DDL, FTS
-  triggers, and `md_status` semantics
-- [references/config.md](references/config.md) — config keys, including
-  `[converter]` and env-var overrides
-- [references/ingest-interface.md](references/ingest-interface.md) —
-  companion JSON schema
-- [references/recipes.md](references/recipes.md) — invocation patterns
-- [references/bibtex.md](references/bibtex.md) — BibTeX mapping and
-  citekey rules
-
-## Verification
-
-Requires MinerU installed (`pipx install mineru`), or Docling
-(`pipx install docling`), on `PATH`. Substitute `--converter docling` if
-that's what you have.
-
-```bash
-scripts/sf-lit init --path /tmp/testlib
-export SCIFORGE_CONFIG=<config.toml pointing at /tmp/testlib>
-scripts/sf-lit doctor
-echo "%PDF-1.4 fake" > /tmp/fake.pdf
-scripts/sf-lit add --title "Test paper" --author "Alice B Smith" --year 2024 \
-    --arxiv-id 2401.00001 --pdf-path /tmp/fake.pdf --tag test
-scripts/sf-lit status  smith2024test         # → md_status=absent
-scripts/sf-lit convert smith2024test         # → md_status=ready
-scripts/sf-lit search "test"                 # BM25 hit + snippet
-scripts/sf-lit read   smith2024test          # dumps paper.md
-scripts/sf-lit show   smith2024test --json | jq .md
-scripts/sf-lit export smith2024test --format bibtex
-```
-
-## Modules
-
-Modules live under `scripts/`:
-
-- Entry point: [scripts/sf-lit](scripts/sf-lit)
-- Ingest & catalog: [scripts/add.py](scripts/add.py)
-- PDF→MD conversion: [scripts/convert.py](scripts/convert.py)
-- Search & read: [scripts/search.py](scripts/search.py),
-  [scripts/read.py](scripts/read.py)
-- Metadata & MD status: [scripts/show.py](scripts/show.py),
-  [scripts/status.py](scripts/status.py)
-- Relations: [scripts/associate.py](scripts/associate.py) (tag /
-  collection / note / add-github / add-news / add-si)
-- Export / open / rebuild: [scripts/export_lib.py](scripts/export_lib.py),
-  [scripts/open_file.py](scripts/open_file.py),
-  [scripts/rebuild.py](scripts/rebuild.py)
-- Shared helpers: [scripts/config.py](scripts/config.py),
-  [scripts/db.py](scripts/db.py), [scripts/ids.py](scripts/ids.py),
-  [scripts/init_db.py](scripts/init_db.py)
+The full operator manual and command inventory live in [README.md](README.md).

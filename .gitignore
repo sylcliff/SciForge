@@ -22,3 +22,4 @@ experiments/
 .sciforge.toml
 sciforge/
 .claude/
+.agents/
