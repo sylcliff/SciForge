@@ -30,7 +30,7 @@ from typing import Optional
 # --------------------------------------------------------------------------- #
 
 _DISPATCH: dict[str, dict[str, str]] = {
-    "zj": {"skill": "remote-paper", "backend": "zj"},
+    "server": {"skill": "remote-paper", "backend": "server"},
 }
 
 

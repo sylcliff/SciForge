@@ -56,7 +56,7 @@ Do **not** invoke this skill for:
 - Anything behind an institution's paywall **when no remote fallback is
   available** — this skill returns `paywalled` and stops. If an
   SSH-reachable campus server is available, opt in with
-  `--fallback-remote zj` (see [Optional remote
+  `--fallback-remote server` (see [Optional remote
   fallback](#optional-remote-fallback)); otherwise use a browser-based
   skill.
 
@@ -104,12 +104,12 @@ skill couldn't get from public APIs to a companion skill that fetches
 them through an SSH-reachable server on a campus IP.
 
 ```bash
-scripts/sf-download 10.1002/anie.202216073 --fallback-remote zj --emit-json
+scripts/sf-download 10.1002/anie.202216073 --fallback-remote server --emit-json
 ```
 
-**Currently available backend**: `zj` — SciForge's
+**Currently available backend**: `server` — SciForge's
 [`skills/remote-paper`](../remote-paper/SKILL.md) driving
-`scansci-pdf` over SSH on `zhaojin.ustc.edu.cn`.
+`scansci-pdf` over SSH on an institutional/campus host.
 
 ### Routing semantics — API-first, remote-second
 
@@ -155,9 +155,9 @@ Consequences worth internalising:
 - On Windows, Git Bash (`C:\Program Files\Git\usr\bin\bash.exe`) must
   be installed and reachable; the loader deliberately avoids the WSL
   bash shim in `System32` because it can't see the Windows filesystem.
-- The backend's own preconditions still apply. For `zj`: an SSH host
+- The backend's own preconditions still apply. For `server`: an SSH host
   alias, and a one-time `bash skills/remote-paper/scripts/ensure_setup.sh
-  --backend zj` per session to verify the server-side environment.
+  --backend server` per session to verify the server-side environment.
 
 ### Success NDJSON shape
 
@@ -166,10 +166,10 @@ A paper that came back via the remote gets these two fields:
 ```json
 {
   "status": "downloaded",
-  "source_used": "remote:zj",
+  "source_used": "remote:server",
   "sources_queried": ["crossref", "unpaywall", "semanticscholar",
-                      "openalex", "remote:zj"],
-  "pdf_path": "D:\\zj_papers\\Dong2023_Isomeric.pdf",
+                      "openalex", "remote:server"],
+  "pdf_path": "D:\\remote_papers\\Dong2023_Isomeric.pdf",
   "bytes": 3626738,
   "meta": { ... }
 }

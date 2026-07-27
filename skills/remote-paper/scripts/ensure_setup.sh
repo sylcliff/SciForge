@@ -11,7 +11,7 @@ usage() {
 Usage: bash ensure_setup.sh --backend <name>
 
 Options:
-  --backend <name>   Backend to set up (e.g. zj). Required.
+  --backend <name>   Backend to set up (e.g. server). Required.
 
 Currently available backends (files under scripts/backends/):
 $(ls "$(dirname "$0")/backends/" 2>/dev/null | grep -oE '^[a-z0-9_-]+-setup\.sh$' | sed 's/-setup\.sh$//' | sed 's/^/  /' || echo "  (none found)")

@@ -21,7 +21,7 @@ usage() {
 Usage: bash fetch.sh --backend <name> <DOI-or-arXiv-id> [<id2> ...]
 
 Options:
-  --backend <name>   Backend to use (e.g. zj). Required.
+  --backend <name>   Backend to use (e.g. server). Required.
 
 Currently available backends (files under scripts/backends/):
 $(ls "$(dirname "$0")/backends/" 2>/dev/null | grep -oE '^[a-z0-9_-]+-fetch\.sh$' | sed 's/-fetch\.sh$//' | sed 's/^/  /' || echo "  (none found)")

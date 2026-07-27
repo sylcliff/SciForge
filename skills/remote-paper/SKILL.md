@@ -1,6 +1,6 @@
 ---
 name: remote-paper
-description: Download academic papers (paywalled or open-access) via an SSH-reachable server that sits on an institutional/campus IP, and copy them back to the local machine. Backend abstraction — currently supports `zj` (`zhaojin.ustc.edu.cn`). Use when the user gives a DOI or arXiv ID and wants the PDF, or says things like "下载这篇文献", "get this paper", "帮我下 PRL/JACS/Nature". Handles ACS, APS, Nature, Science, Wiley, Elsevier and more via scansci-pdf.
+description: Download academic papers (paywalled or open-access) via an SSH-reachable server that sits on an institutional/campus IP, and copy them back to the local machine. Backend abstraction — currently supports a generic `server` backend. Use when the user gives a DOI or arXiv ID and wants the PDF, or says things like "下载这篇文献", "get this paper", "帮我下 PRL/JACS/Nature". Handles ACS, APS, Nature, Science, Wiley, Elsevier and more via scansci-pdf.
 allowed-tools: Bash, Read
 ---
 
@@ -17,7 +17,9 @@ dispatcher parses `--backend <name>` and delegates all real work to
 (e.g. another university) means adding two backend files — no changes
 to the main scripts.
 
-**Currently supported backend:** `zj` (`zhaojin.ustc.edu.cn`).
+**Currently supported backend:** `server` — a generic SSH-reachable Linux
+host with `scansci-pdf` in a conda env. Configure via `SERVER_*`
+environment variables (see below) and an entry in `~/.ssh/config`.
 
 ## When to use
 
@@ -27,8 +29,8 @@ paywalled (or that `sf-download` has already reported as `paywalled`):
 - "下载 10.1021/jacs.4c02086" / "get this DOI" / "帮我下这篇 PRL"
 - A bare DOI or arXiv ID in the message
 - A list of DOIs to fetch in batch
-- `sf-download --fallback-remote zj` — auto-invoked when the OA fetcher
-  reports `paywalled` (see `skills/download/SKILL.md`)
+- `sf-download --fallback-remote <name>` — auto-invoked when the OA
+  fetcher reports `paywalled` (see `skills/download/SKILL.md`)
 
 ## Configuration (defaults, override with env vars)
 
@@ -36,15 +38,25 @@ Backend-agnostic:
 
 | Setting | Default | Env var |
 |---|---|---|
-| Local save dir | `D:\zj_papers` (`/d/zj_papers`) | `REMOTE_PAPER_LOCAL_DIR` (fallback: `ZJ_LOCAL_DIR`) |
-| Download timeout | `240` s | `REMOTE_PAPER_DL_TIMEOUT` (fallback: `ZJ_DL_TIMEOUT`) |
+| Local save dir | `D:\remote_papers` (`/d/remote_papers`) | `REMOTE_PAPER_LOCAL_DIR` |
+| Download timeout | `240` s | `REMOTE_PAPER_DL_TIMEOUT` |
 
-Backend `zj` specific:
+Backend `server` specific:
 
 | Setting | Default | Env var |
 |---|---|---|
-| SSH host | `zj` | `ZJ_HOST` |
-| Remote work dir | `/public/home/syllzp/scansci_test/dl` | `ZJ_REMOTE_DIR` |
+| SSH host / alias | `server` | `SERVER_HOST` |
+| Conda env name | `scansci` | `SERVER_SCANSCI_ENV` |
+| Conda root on server | `$HOME/miniconda3` | `SERVER_CONDA_ROOT` |
+| Remote download dir | `$HOME/scansci_dl` | `SERVER_SCANSCI_DIR` |
+
+Set these in your shell profile (they never enter git). Example:
+
+```bash
+export SERVER_HOST=my-hpc
+export SERVER_CONDA_ROOT=/opt/anaconda3
+export SERVER_SCANSCI_DIR=/scratch/papers
+```
 
 ## How to run
 
@@ -54,15 +66,15 @@ ensures the campus config is correct. Idempotent; skip on later downloads
 in the same session.
 
 ```bash
-bash skills/remote-paper/scripts/ensure_setup.sh --backend zj
+bash skills/remote-paper/scripts/ensure_setup.sh --backend server
 ```
 
 **Step 2 — fetch one or more papers.** Pass DOIs and/or arXiv IDs as
 positional args after `--backend`:
 
 ```bash
-bash skills/remote-paper/scripts/fetch.sh --backend zj 10.1021/jacs.4c02086
-bash skills/remote-paper/scripts/fetch.sh --backend zj 10.1103/PhysRevLett.134.176001 2502.01420
+bash skills/remote-paper/scripts/fetch.sh --backend server 10.1021/jacs.4c02086
+bash skills/remote-paper/scripts/fetch.sh --backend server 10.1103/PhysRevLett.134.176001 2502.01420
 ```
 
 The script downloads server-side, copies the PDF back to the local dir,
@@ -77,8 +89,8 @@ each identifier is:
 PDF_PATH=<absolute local path to the .pdf>
 ```
 
-Callers (e.g. `sf-download --fallback-remote zj`) grep this to pick up
-the file. Failed identifiers print no `PDF_PATH=` line for that item.
+Callers (e.g. `sf-download --fallback-remote <name>`) grep this to pick
+up the file. Failed identifiers print no `PDF_PATH=` line for that item.
 
 ## Key facts baked in (do not re-discover)
 
@@ -88,10 +100,10 @@ the file. Failed identifiers print no `PDF_PATH=` line for that item.
   `legal_only` uses only the 10 legal institutional sources — clean, fast,
   and it's what gets full text.
 - **APS/PRL patch.** `publisher_strategies.py:1663` originally opened
-  `https://www.google.com/` as a browser warm-up page, but the server
-  can't reach google, so APS/PRL downloads crashed. It's patched to
-  `about:blank`. `ensure_setup.sh` re-applies this if an upgrade reverts
-  it. Backup: `publisher_strategies.py.bak`.
+  `https://www.google.com/` as a browser warm-up page, but many campus
+  servers can't reach google, so APS/PRL downloads crashed. It's patched
+  to `about:blank`. `ensure_setup.sh` re-applies this if an upgrade
+  reverts it. Backup: `publisher_strategies.py.bak`.
 - **Verified publishers:** ACS (JACS), APS (PRL, after patch), Nature/Springer,
   Science (AAAS), Wiley (Angew), Elsevier — all return full text on
   campus IP.
@@ -100,7 +112,7 @@ the file. Failed identifiers print no `PDF_PATH=` line for that item.
   `fetch.sh` auto-retries 3×, which recovers almost all cases. If all 3
   fail, just run it again later or use arXiv.
 - **arXiv fallback.** If a DOI fails and the paper has an arXiv preprint,
-  retry with the arXiv ID (e.g. `bash fetch.sh --backend zj 2502.01420`).
+  retry with the arXiv ID (e.g. `bash fetch.sh --backend server 2502.01420`).
 - **Small PDFs (~50KB) are not necessarily failures** — could be a
   genuinely short item (book review, comment). Check the printed
   title/pages, not just size.
@@ -116,10 +128,10 @@ exist first.
 
 ## Troubleshooting
 
-- **"no PDF produced"** → run `ensure_setup.sh --backend zj`; check the
-  DOI is real (Crossref).
+- **"no PDF produced"** → run `ensure_setup.sh --backend server`; check
+  the DOI is real (Crossref).
 - **APS/PRL specifically fails** → the patch was likely reverted by an
-  upgrade; `ensure_setup.sh --backend zj` fixes it.
+  upgrade; `ensure_setup.sh --backend server` fixes it.
 - **APS/PRL fails 3× in a row** → run again later (probabilistic), or
   try the paper's arXiv preprint if it has one.
 - **IOP JS challenge / AIP anti-bot** → both put the article behind a
@@ -136,15 +148,15 @@ exist first.
 |---|---|
 | `scripts/fetch.sh` | Main dispatcher: parses `--backend <name>`, delegates to `backends/<name>-fetch.sh`. |
 | `scripts/ensure_setup.sh` | Main dispatcher: parses `--backend <name>`, delegates to `backends/<name>-setup.sh`. |
-| `scripts/backends/zj-fetch.sh` | zj backend downloader: SSH to zj, scansci-pdf legal_only, 3× retry, scp back, emit `PDF_PATH=...`. |
-| `scripts/backends/zj-setup.sh` | zj backend environment repair: APS google.com patch, campus config, pymupdf install. Idempotent. |
+| `scripts/backends/server-fetch.sh` | Generic `server` backend downloader: SSH to the host, scansci-pdf legal_only, 3× retry, scp back, emit `PDF_PATH=...`. |
+| `scripts/backends/server-setup.sh` | Generic `server` backend environment repair: APS google.com patch, campus config, pymupdf install. Idempotent. |
 
 ## Adding a new backend
 
 To add e.g. `tsinghua`:
 
 1. Write `scripts/backends/tsinghua-fetch.sh` (same interface as
-   `zj-fetch.sh`: takes DOIs/arXiv IDs as positional args, downloads,
+   `server-fetch.sh`: takes DOIs/arXiv IDs as positional args, downloads,
    emits final `PDF_PATH=<local absolute path>` per success).
 2. Write `scripts/backends/tsinghua-setup.sh` (idempotent environment
    check).

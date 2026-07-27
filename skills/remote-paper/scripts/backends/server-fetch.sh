@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# zj-fetch.sh — download one or more papers on the zj server and copy them
-# back locally. Called by ../fetch.sh via --backend zj.
+# server-fetch.sh — download one or more papers on a remote server and copy
+# them back locally. Called by ../fetch.sh via --backend server.
 #
-# Usage:  bash zj-fetch.sh <DOI-or-arXiv-id> [<DOI2> ...]
+# Usage:  bash server-fetch.sh <DOI-or-arXiv-id> [<DOI2> ...]
 #
 # For each identifier:
-#   1. runs `scansci-pdf get <id> --output <remote_dir> --strategy legal_only` on zj
+#   1. runs `scansci-pdf get <id> --output <remote_dir> --strategy legal_only`
 #   2. parses the "OK: <path>" line to locate the downloaded PDF
-#   3. scp's it back to LOCAL_DIR (default D:\zj_papers, i.e. /d/zj_papers)
+#   3. scp's it back to LOCAL_DIR
 #   4. validates page count / size with pymupdf and prints a summary
 #   5. prints a machine-readable `PDF_PATH=<local absolute path>` line on success
 #
@@ -15,16 +15,26 @@
 # No CrossRef fallback — if scansci-pdf can't get it after 3 tries, we
 # report failure. Try again later or use the arXiv preprint.
 #
+# Server configuration (env vars):
+#   SERVER_HOST              SSH alias (must be in ~/.ssh/config). Default: server
+#   SERVER_SCANSCI_ENV       conda env name with scansci-pdf. Default: scansci
+#   SERVER_CONDA_ROOT        conda install prefix on the server. Default: $HOME/miniconda3
+#   SERVER_SCANSCI_DIR       remote download dir. Default: $HOME/scansci_dl
+#   REMOTE_PAPER_LOCAL_DIR   local save dir. Default: /d/remote_papers
+#   REMOTE_PAPER_DL_TIMEOUT  per-download timeout (s). Default: 240
+#
 # Exit code: 0 if every identifier succeeded, 1 if any failed.
 set -uo pipefail
 
 # ---- config (override via env) ----
-SSH_HOST="${ZJ_HOST:-zj}"
-LOCAL_DIR="${REMOTE_PAPER_LOCAL_DIR:-${ZJ_LOCAL_DIR:-/d/zj_papers}}"
-REMOTE_DIR="${ZJ_REMOTE_DIR:-/public/home/syllzp/scansci_test/dl}"
-ENV_BIN="/public/home/syllzp/software/dasp/anaconda3/envs/scansci/bin"
-CONDA_SH="/public/home/syllzp/software/dasp/anaconda3/etc/profile.d/conda.sh"
-DL_TIMEOUT="${REMOTE_PAPER_DL_TIMEOUT:-${ZJ_DL_TIMEOUT:-240}}"
+SSH_HOST="${SERVER_HOST:-server}"
+SCANSCI_ENV="${SERVER_SCANSCI_ENV:-scansci}"
+CONDA_ROOT="${SERVER_CONDA_ROOT:-\$HOME/miniconda3}"
+ENV_BIN="$CONDA_ROOT/envs/$SCANSCI_ENV/bin"
+CONDA_SH="$CONDA_ROOT/etc/profile.d/conda.sh"
+LOCAL_DIR="${REMOTE_PAPER_LOCAL_DIR:-/d/remote_papers}"
+REMOTE_DIR="${SERVER_SCANSCI_DIR:-\$HOME/scansci_dl}"
+DL_TIMEOUT="${REMOTE_PAPER_DL_TIMEOUT:-240}"
 # -----------------------------------
 
 BANNER='post-quantum\|vulnerable\|openssh.com\|may need to be upgraded'
@@ -32,7 +42,7 @@ mkdir -p "$LOCAL_DIR"
 
 fail=0
 
-# Convert a possibly-mixed-form local path (e.g. /d/zj_papers/foo.pdf under
+# Convert a possibly-mixed-form local path (e.g. /d/remote_papers/foo.pdf under
 # Git Bash) to something a Windows caller can open. Git Bash's `cygpath` gives
 # us the native form when available; otherwise leave as-is.
 to_native_path() {
@@ -58,7 +68,7 @@ fetch_one() {
     for attempt in 1 2 3; do
         [ "$attempt" -gt 1 ] && echo "    ↻ 重试 ($attempt/3)…"
         log=$(ssh -o ConnectTimeout=25 "$SSH_HOST" \
-            "source '$CONDA_SH'; conda activate scansci; mkdir -p '$REMOTE_DIR'; \
+            "source '$CONDA_SH'; conda activate '$SCANSCI_ENV'; mkdir -p '$REMOTE_DIR'; \
              timeout $DL_TIMEOUT '$ENV_BIN/scansci-pdf' get '$id' --output '$REMOTE_DIR' --strategy legal_only" \
             2>&1 | grep -v "$BANNER")
 
@@ -112,8 +122,8 @@ fetch_one() {
         echo "       ⚠ 文件较小（<80KB）——可能是短文/书评,或未拿到全文,请核对内容"
     fi
     # Machine-readable contract line (last line of this item on success).
-    # Callers such as sf-download --fallback-remote zj grep this to pick up
-    # the file.
+    # Callers such as sf-download --fallback-remote <name> grep this to pick
+    # up the file.
     echo "PDF_PATH=$(to_native_path "$local_path")"
     return 0
 }

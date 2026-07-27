@@ -126,7 +126,7 @@ Backup: C:\Users\syllz\.config\sciforge\config.toml.bak-2026-07-26T15-32-08Z
 
 Config values
 ─────────────────────────────────────────────────
-✓ polite_email                syllzp@163.com
+✓ polite_email                user@example.com
 ✓ library                     D:\code\...\library  (writable)
 ✓ converter.default           mineru
 ⚠ semanticscholar_api_key     unset

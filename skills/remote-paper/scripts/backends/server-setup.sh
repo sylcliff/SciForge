@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# zj-setup.sh — verify/repair the zj server's scansci-pdf environment.
-# Called by ../ensure_setup.sh via --backend zj. Idempotent; safe to run
+# server-setup.sh — verify/repair the remote server's scansci-pdf environment.
+# Called by ../ensure_setup.sh via --backend server. Idempotent; safe to run
 # repeatedly. Run once per session or when a download fails unexpectedly.
 #
 # Checks / fixes:
@@ -8,18 +8,35 @@
 #      a scansci-pdf upgrade overwrites it, so re-apply if missing).
 #   2. Config: is_campus_network=true, browser_headless=true, scihub_enabled=false.
 #   3. pymupdf installed (PDF validation / fetch imports).
+#
+# Server configuration (env vars):
+#   SERVER_HOST              SSH alias. Default: server
+#   SERVER_SCANSCI_ENV       conda env name with scansci-pdf. Default: scansci
+#   SERVER_CONDA_ROOT        conda install prefix on the server. Default: $HOME/miniconda3
 set -uo pipefail
 
-SSH_HOST="${ZJ_HOST:-zj}"
-ENV_BIN="/public/home/syllzp/software/dasp/anaconda3/envs/scansci/bin"
-SITE="/public/home/syllzp/software/dasp/anaconda3/envs/scansci/lib/python3.11/site-packages/scansci_pdf"
+SSH_HOST="${SERVER_HOST:-server}"
+SCANSCI_ENV="${SERVER_SCANSCI_ENV:-scansci}"
+CONDA_ROOT="${SERVER_CONDA_ROOT:-\$HOME/miniconda3}"
+ENV_BIN="$CONDA_ROOT/envs/$SCANSCI_ENV/bin"
+# scansci_pdf package dir, resolved on the server (python version may vary).
+SITE_GLOB="$CONDA_ROOT/envs/$SCANSCI_ENV/lib/python*/site-packages/scansci_pdf"
+
+echo "[server-setup] host=$SSH_HOST env=$SCANSCI_ENV"
+
+# Resolve the actual site-packages/scansci_pdf path on the server (python
+# minor version isn't known locally), then run the repair logic. Paths are
+# passed as argv to the Python heredoc to avoid local/remote quote conflicts.
+ssh -o ConnectTimeout=25 "$SSH_HOST" "bash -s -- '$SITE_GLOB' '$ENV_BIN'" <<'REMEOF' 2>&1 | grep -v 'post-quantum\|vulnerable\|openssh.com\|may need to be upgraded'
+set -uo pipefail
+SITE=$(ls -d $1 2>/dev/null | head -1)
+ENV_BIN="$2"
+if [ -z "$SITE" ]; then
+    echo "PATCH: WARNING scansci_pdf package dir not found under $1"
+    SITE="__missing__"
+fi
 PUB_FILE="$SITE/publisher_strategies.py"
-
-echo "[zj-setup] host=$SSH_HOST"
-
-# Python logic goes over ssh STDIN (heredoc), paths passed as argv — this avoids
-# all local/remote quote conflicts. The banner is filtered from the output.
-ssh -o ConnectTimeout=25 "$SSH_HOST" "$ENV_BIN/python - '$SITE' '$PUB_FILE' '$ENV_BIN'" <<'PYEOF' 2>&1 | grep -v 'post-quantum\|vulnerable\|openssh.com\|may need to be upgraded'
+"$ENV_BIN/python" - "$SITE" "$PUB_FILE" "$ENV_BIN" <<'PYEOF'
 import subprocess, sys, os, importlib.util
 
 SITE, PUB, ENV_BIN = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -74,5 +91,6 @@ except Exception as e:
 
 print('\n'.join(report))
 PYEOF
+REMEOF
 
-echo "[zj-setup] done"
+echo "[server-setup] done"

@@ -117,7 +117,7 @@ writes a `.bak-<ts>` first.
 ## Exit doctor: the ✓/⚠/✗ table
 
 ```
-✓ polite_email                syllzp@163.com
+✓ polite_email                user@example.com
 ✓ library                     D:\...\library  (writable)
 ⚠ semanticscholar_api_key     unset  → S2 rate-limits after ~10 requests
                                        fix: sf-init and answer question 3
