@@ -43,6 +43,10 @@ if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot 'skills'))) {
     $RepoRoot   = $PSScriptRoot
     $SkillsSrc  = Join-Path $RepoRoot 'skills'
     $Template   = Join-Path $RepoRoot 'templates\AGENTS.md'
+    if (-not (Test-Path $Template)) {
+        Write-Error "templates/AGENTS.md not found — SciForge install is incomplete."
+        exit 1
+    }
 } else {
     $Remote = $true
     $TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
@@ -69,11 +73,6 @@ if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot 'skills'))) {
     if (-not (Test-Path $Template)) {
         Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
         Write-Error "templates/AGENTS.md not found in downloaded archive"
-        exit 1
-    }
-} else {
-    if (-not (Test-Path $Template)) {
-        Write-Error "templates/AGENTS.md not found — SciForge install is incomplete."
         exit 1
     }
 }
