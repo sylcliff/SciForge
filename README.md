@@ -99,6 +99,18 @@ SciForge is designed to work with any capable coding agent. First-class targets:
 
 ### 2. Install SciForge
 
+**One-line (no clone needed):**
+
+```bash
+# Linux / macOS / Git Bash — cd to your project, then:
+curl -fsSL https://raw.githubusercontent.com/sylcliff/SciForge/main/install.sh | bash
+
+# Windows PowerShell — cd to your project, then:
+irm https://raw.githubusercontent.com/sylcliff/SciForge/main/install.ps1 | iex
+```
+
+**Or from a local clone:**
+
 ```bash
 git clone https://github.com/sylcliff/SciForge.git
 cd SciForge
@@ -124,6 +136,17 @@ auto-discovers these) and writes an `AGENTS.md` (Codex CLI reads this).
 | `-t /path` | Install into a specific directory |
 | `--global` | Install user-level (`~/.claude/skills/`, `~/.codex/AGENTS.md`) |
 | `-f` / `--force` | Overwrite existing files without prompting |
+
+To pass flags through the one-line installer, append them after `-s --` (bash)
+or as normal arguments (PowerShell):
+
+```bash
+# bash — install globally, force overwrite:
+curl -fsSL https://raw.githubusercontent.com/sylcliff/SciForge/main/install.sh | bash -s -- --global -f
+
+# PowerShell — install globally:
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/sylcliff/SciForge/main/install.ps1))) -Global
+```
 
 Then just talk to your agent as usual — skills and workflows are discoverable.
 

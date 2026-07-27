@@ -2,12 +2,19 @@
 # SciForge installer (PowerShell) — installs skills into a target project
 # for Claude Code, and writes an AGENTS.md for Codex CLI.
 #
+# One-liner (no clone needed):
+#   irm https://raw.githubusercontent.com/sylcliff/SciForge/main/install.ps1 | iex
+#
+# From a local clone:
 #   ./install.ps1 [-Target <path>] [-Global] [-Force]
 #
 #   (no args)        Install into the current directory (project-level).
 #   -Target <path>   Install into <path> instead of the current directory.
 #   -Global          Install user-level instead of project-level.
 #   -Force           Overwrite existing skills / AGENTS.md without prompting.
+#
+# To pass flags through the one-liner:
+#   & ([scriptblock]::Create((irm ...))) -Global
 #
 # Project-level layout (default):
 #   <target>/.claude/skills/<name>/     Claude Code auto-discovers these
@@ -29,18 +36,46 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# --- Locate the SciForge repo (this script's own directory) ------------------
-$RepoRoot   = $PSScriptRoot
-$SkillsSrc  = Join-Path $RepoRoot 'skills'
-$Template   = Join-Path $RepoRoot 'templates\AGENTS.md'
+$Remote = $false
 
-if (-not (Test-Path $SkillsSrc)) {
-    Write-Error "skills/ not found under $RepoRoot — run this from the SciForge repo."
-    exit 1
-}
-if (-not (Test-Path $Template)) {
-    Write-Error "templates/AGENTS.md not found — SciForge install is incomplete."
-    exit 1
+# --- Locate the SciForge repo (or download if running remotely) ----------------
+if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot 'skills'))) {
+    $RepoRoot   = $PSScriptRoot
+    $SkillsSrc  = Join-Path $RepoRoot 'skills'
+    $Template   = Join-Path $RepoRoot 'templates\AGENTS.md'
+} else {
+    $Remote = $true
+    $TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
+    New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null
+    Write-Host "Downloading SciForge (one-time)…" -ForegroundColor Cyan
+    $ZipUrl = "https://codeload.github.com/sylcliff/SciForge/zip/refs/heads/main"
+    $ZipPath = Join-Path $TmpDir 'sciforge.zip'
+    try {
+        Invoke-WebRequest -Uri $ZipUrl -OutFile $ZipPath -ErrorAction Stop
+        Expand-Archive -Path $ZipPath -DestinationPath $TmpDir -Force
+    } catch {
+        Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
+        Write-Error "Download failed: $_"
+        exit 1
+    }
+    $RepoRoot   = Join-Path $TmpDir 'SciForge-main'
+    $SkillsSrc  = Join-Path $RepoRoot 'skills'
+    $Template   = Join-Path $RepoRoot 'templates\AGENTS.md'
+    if (-not (Test-Path $SkillsSrc)) {
+        Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
+        Write-Error "skills/ not found in downloaded archive"
+        exit 1
+    }
+    if (-not (Test-Path $Template)) {
+        Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
+        Write-Error "templates/AGENTS.md not found in downloaded archive"
+        exit 1
+    }
+} else {
+    if (-not (Test-Path $Template)) {
+        Write-Error "templates/AGENTS.md not found — SciForge install is incomplete."
+        exit 1
+    }
 }
 
 # --- Resolve install destinations --------------------------------------------
@@ -205,6 +240,9 @@ if ((Test-Path $AgentsDest) -and (-not $Force)) {
 # --- Done --------------------------------------------------------------------
 Write-Host ""
 Write-Host "Done. Installed $($Skills.Count) skills ($ScopeLabel)." -ForegroundColor Cyan
+if ($Remote) {
+    Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
+}
 Write-Host ""
 Write-Host "Next steps:"
 Write-Host "  1. Claude Code: skills are auto-discovered under .claude/skills/."

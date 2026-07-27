@@ -2,12 +2,19 @@
 # SciForge installer (Bash) — installs skills into a target project
 # for Claude Code, and writes an AGENTS.md for Codex CLI.
 #
+# One-liner (no clone needed):
+#   curl -fsSL https://raw.githubusercontent.com/sylcliff/SciForge/main/install.sh | bash
+#
+# From a local clone:
 #   ./install.sh [-t <path>] [--global] [-f]
 #
 #   (no args)       Install into the current directory (project-level).
 #   -t <path>       Install into <path> instead of the current directory.
 #   --global        Install user-level instead of project-level.
 #   -f, --force     Overwrite existing skills / AGENTS.md without prompting.
+#
+# To pass flags through the one-liner:
+#   curl ... | bash -s -- --global -f
 #
 # Project-level layout (default):
 #   <target>/.claude/skills/<name>/     Claude Code auto-discovers these
@@ -30,6 +37,7 @@ warn() { printf "  \033[33m%s\033[0m\n" "$*"; }
 TARGET=""
 GLOBAL=0
 FORCE=0
+REMOTE=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -41,13 +49,26 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# --- Locate the SciForge repo ------------------------------------------------
+# --- Locate the SciForge repo (or download if running remotely) ---------------
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd -P)"
 SKILLS_SRC="$REPO_ROOT/skills"
 TEMPLATE="$REPO_ROOT/templates/AGENTS.md"
 
-[[ -d "$SKILLS_SRC" ]]  || die "skills/ not found under $REPO_ROOT — run this from the SciForge repo."
-[[ -f "$TEMPLATE" ]]    || die "templates/AGENTS.md not found — SciForge install is incomplete."
+if [[ ! -d "$SKILLS_SRC" || ! -f "$TEMPLATE" ]]; then
+    REMOTE=1
+    TMPDIR="$(mktemp -d)"
+    trap 'rm -rf "$TMPDIR"' EXIT
+    info "Downloading SciForge (one-time)…"
+    curl -fsSL "https://codeload.github.com/sylcliff/SciForge/tar.gz/main" \
+        -o "$TMPDIR/sciforge.tar.gz" || die "download failed — check your network"
+    tar -xzf "$TMPDIR/sciforge.tar.gz" -C "$TMPDIR" \
+        || die "extract failed"
+    REPO_ROOT="$TMPDIR/SciForge-main"
+    SKILLS_SRC="$REPO_ROOT/skills"
+    TEMPLATE="$REPO_ROOT/templates/AGENTS.md"
+    [[ -d "$SKILLS_SRC" ]] || die "skills/ not found in downloaded archive"
+    [[ -f "$TEMPLATE" ]]   || die "templates/AGENTS.md not found in downloaded archive"
+fi
 
 # --- Resolve install destinations --------------------------------------------
 if [[ $GLOBAL -eq 1 ]]; then
