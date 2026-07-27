@@ -66,44 +66,26 @@ polite email 和 S2 key 通过环境变量共享(和 `sf-download` 同一套):
 - `SCIFORGE_POLITE_EMAIL`
 - `SCIFORGE_S2_API_KEY`
 
-## 跨源去重(β 模式)
+## 跨源合并三段:去重 → arXiv 升级 → 排名
 
-**Union-find on** `(doi, pmid, pmcid, arxiv_id, openalex_id, s2_id)` —— 任一 id 相等就并成一组。**不做标题模糊匹配**(零误合并承诺)。
+每次搜索固定三步:
 
-字段级合并优先级:
-- `title / abstract`:Crossref > OpenAlex > PubMed > S2 > arXiv
-- `authors`:      Crossref > PubMed > OpenAlex > S2 > arXiv
-- `journal / volume`: Crossref > OpenAlex > PubMed
-- `year`:         最早非空
-- `citation_count`: `max(S2, OpenAlex)`
-- `is_oa`:        仅 OpenAlex 权威(其他源为 null)
-- `identifiers` / `sources_hit`:union
+- **β 去重**:`(doi, pmid, pmcid, arxiv_id, openalex_id, s2_id)` 上做
+  union-find,任一 id 相同就合并。**不做标题模糊匹配** —— 零误合并
+  承诺。
+- **arXiv 预印本 ↔ 正刊升级**:三级,默认前两级开。Path A 免 HTTP
+  从各源自带的交叉引用字段挖;Path B 对只有 arxiv 的组并发查 OpenAlex
+  + S2 拿正刊 DOI(`--no-arxiv-upgrade` 关);Path C 可选走 Crossref
+  标题反查(`--arxiv-upgrade-fallback title-search`)。每次升级都对
+  Crossref 做年份 ±3 + 首作者姓的后验。
+- **RRF 排名**:`k=60`,跨源共识越强分越高。`--sort` 可覆盖为
+  `year:desc` / `citations:desc`。
 
-## arXiv 预印本 ↔ 正刊升级
-
-一篇论文常常在 arXiv 和正刊各有一份。**upgrade 逻辑分三级,默认前两级开:**
-
-- **Path A(零 HTTP,静默红利)**:从 OpenAlex `locations[*].landing_page_url`、Crossref `relation.has-preprint`、arXiv `journal_ref` / `comment` 里提取 arxiv id 或正刊 DOI。让 β dedup 后续能自动合并。
-- **Path B(post-dedup lookup,默认开)**:对**只有 arxiv 命中**的组,并发查 OpenAlex + Semantic Scholar,拿正刊 DOI 后再跑一次 β dedup。OpenAlex 用**两跳查询**(preprint DOI → title → `type:article`),避开 OA 把预印本和正刊分成两个 work 的坑。
-- **Path C(可选)**:`--arxiv-upgrade-fallback title-search` 打开时,Path B 失败后走 Crossref 标题反查,要求标题 Jaccard ≥ 0.85 且首作者姓一致才合并。
-- **Post-hoc 验证**:每个 upgrade 都反查 Crossref DOI,比对年份(±3)+ 首作者姓,不通过就拒绝,不占用 `sources_hit`(RRF 分不受影响)。
-
-关闭全部升级:`--no-arxiv-upgrade`。
-
-审计字段:
-- `arxiv_upgraded: true | false`
-- `arxiv_upgrade_via: "id-lookup" | "title-search"`(仅 upgraded 时)
-
-DataCite 的 arxiv 自 DOI(`10.48550/arxiv.*`)明确不接受为"正刊 DOI",防止假升级。
-
-## 排名
-
-**默认 RRF(k=60)**:`score = Σ 1 / (60 + rank_in_source)`。跨源共识越强分越高。
-
-`--sort` 覆盖:
-- `relevance`(默认,RRF)
-- `year:desc`(最新)
-- `citations:desc`(被引最多)
+三段全部机制细节(两跳查询、DataCite 自 DOI 处理、`arxiv_upgraded`
+审计字段等)在
+[references/ranking-dedup-upgrade.md](references/ranking-dedup-upgrade.md)。
+每字段元数据合并优先级在
+[references/output-schema.md](references/output-schema.md)。
 
 ## 输出格式(`--format`)
 
@@ -117,7 +99,7 @@ DataCite 的 arxiv 自 DOI(`10.48550/arxiv.*`)明确不接受为"正刊 DOI",防
 
 ## Agent 呈现契约
 
-当 agent(Claude / Codex / 其他 LLM)在对话里给用户展示 `sf-search` 结果时,遵守 memory 里的 [`sf-search-presentation`](~/.claude/projects/D--code-SciForge/memory/sf-search-presentation.md) 三段式:
+当 agent(Claude / Codex / 其他 LLM)在对话里给用户展示 `sf-search` 结果时,遵守 [`references/presentation.md`](references/presentation.md) 四段式:
 
 1. **Section 0**:命令回显 + 3 行摘要(命中数、源分布、失败源、去重效果、upgrade 数、OA 估计、噪声估计)
 2. **Section 1**:**5 个固定角色槽**(综述 / 里程碑 / 核心方法 / 新兴前沿 / 应用),密度 C(3-4 行 + 摘要片段 + 推荐理由)
@@ -125,6 +107,8 @@ DataCite 的 arxiv 自 DOI(`10.48550/arxiv.*`)明确不接受为"正刊 DOI",防
 4. **Section 3**:完整清单,密度 A(1 行/篇),上限 100
 
 推荐理由必须用**闭集 6 tag**:`[综述] / [里程碑] / [方法核心] / [新方向] / [应用] / [疑似噪声]`。禁用"必读 / 经典 / 很重要"等空词。
+
+`refs` / `cited-by` 用简化版 [`references/presentation-citation.md`](references/presentation-citation.md)(Section 0 + Section 3,无推荐槽、无分组 —— 引文边没有相关性排名)。
 
 ## 目录结构
 
@@ -155,7 +139,11 @@ search/
 │   ├── output-schema.md
 │   ├── query-modes.md
 │   ├── sources.md
+│   ├── ranking-dedup-upgrade.md
 │   ├── mesh-strategy.md
+│   ├── citations.md
+│   ├── presentation.md              # agent 呈现契约(主搜索)
+│   ├── presentation-citation.md     # agent 呈现契约(refs/cited-by)
 │   └── config.md
 └── tests/                    # 87 offline tests, ~0.4s
     ├── conftest.py           # 自动 mock crossref.get_by_doi

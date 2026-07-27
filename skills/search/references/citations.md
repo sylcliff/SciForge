@@ -226,8 +226,8 @@ sf-search refs 10.1038/nature12373 \
 ## Presentation contract (agent-facing)
 
 When an LLM agent surfaces `refs` / `cited-by` results in conversation,
-it MUST follow the simplified rendering rules in the memory file
-`sf-search-citation-presentation`. The core rules:
+it MUST follow the simplified rendering rules in
+[presentation-citation.md](presentation-citation.md). The core rules:
 
 - No 5-recommendation section (citation graphs have no relevance rank —
   recommending "the 5 most relevant refs" would be fabrication).
@@ -237,7 +237,7 @@ it MUST follow the simplified rendering rules in the memory file
 - Section 3 is a density-A full list; cap at 20 for `cited-by`, 100 for
   `refs`; overflow points at `--out FILE`.
 
-See the memory file for exact templates.
+See [presentation-citation.md](presentation-citation.md) for exact templates.
 
 ## What this does NOT do
 

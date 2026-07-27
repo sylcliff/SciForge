@@ -1,6 +1,6 @@
 ---
 name: search
-description: Use when the user wants to discover papers by topic/keywords/boolean query/MeSH strategy across multiple public academic sources (PubMed, Crossref, arXiv, OpenAlex, Semantic Scholar), or to list one paper's outgoing references / incoming citations. Outputs deduped NDJSON that pipes directly into `sf-download` or `sf-lit add`. Also builds MeSH search strategies for PubMed.
+description: Use when the user wants to find papers across public academic sources (PubMed, Crossref, arXiv, OpenAlex, Semantic Scholar) by topic, boolean query, or fields; to walk one paper's outgoing references or incoming citations (refs / cited-by); or to build a MeSH search strategy for PubMed. Emits NDJSON that pipes into `sf-download` or `sf-lit add`.
 ---
 
 # search — API-first multi-source discovery
@@ -27,64 +27,28 @@ PDFs) or `sf-lit add` (catalog without PDFs).
 
 ## Data sources
 
-| Source | Auth | Best for |
-|---|---|---|
-| PubMed E-utilities | polite email (recommended) | Biomedical, MeSH indexing |
-| Crossref REST | polite mailto (recommended) | Cross-disciplinary, DOIs |
-| arXiv Atom API | none (3 s min interval) | Preprints: physics / math / CS / q-bio |
-| OpenAlex REST | polite mailto (recommended) | Cross-disciplinary + citation counts |
-| Semantic Scholar Graph API | API key (recommended) | Citation counts, field-of-study filters |
+Five public REST APIs, queried in parallel: **PubMed** (biomedical,
+MeSH), **Crossref** (cross-disciplinary DOIs), **arXiv** (preprints),
+**OpenAlex** (cross-disciplinary + citation counts + `is_oa`),
+**Semantic Scholar** (citation graph + field filters). Endpoints, rate
+limits, and query languages: [references/sources.md](references/sources.md).
 
-**Ranking**: Reciprocal Rank Fusion (RRF, k=60) over each source's own
-relevance rank; `--sort` overrides to `year:desc` or `citations:desc`.
+## How results are combined
 
-**Dedup**: union-find on `(doi, pmid, pmcid, arxiv_id, openalex_id,
-s2_id)` — any shared identifier merges two records. Title-based fuzzy
-matching is deliberately **not** done.
-
-**arXiv preprint ↔ journal upgrade** happens in three tiers:
-
-- **Path A (zero HTTP)** — always on. Adapters mine cross-refs from
-  OpenAlex `locations[*].landing_page_url` / `open_access.oa_url`,
-  Crossref `relation.has-preprint` / `is-preprint-of`, and arXiv
-  `<arxiv:doi>` / `<arxiv:journal_ref>` / `<arxiv:comment>` (scanned
-  for embedded DOIs). Whatever preprint↔journal pairs exist in these
-  fields get β-deduped for free.
-- **Path B (post-dedup lookup)** — on by default; disable with
-  `--no-arxiv-upgrade`. For groups that are still arxiv-only after
-  β dedup, concurrent OpenAlex + Semantic Scholar lookup by arxiv id.
-  OpenAlex uses a **two-hop query** (preprint DOI → title →
-  `type:article`) because OpenAlex represents preprint and journal as
-  two separate work IDs. DataCite arxiv self-DOIs (`10.48550/arxiv.*`)
-  are explicitly rejected as "journal DOIs". First real journal DOI
-  wins; dedup then re-runs so preprint and journal records merge.
-- **Path C (optional)** — `--arxiv-upgrade-fallback title-search`.
-  When Path B fails, query Crossref by the preprint's title; accept
-  only when title Jaccard ≥ 0.85 AND first-author surname matches.
-
-**Post-hoc verification** — after any upgrade returns a DOI, that DOI
-is cross-checked against Crossref (`/works/{doi}`) for year (±3
-tolerance) + first-author surname agreement. A mismatch drops the
-upgrade; a network flake keeps it (fail-open). This catches
-plausible-looking but wrong DOIs before injection.
-
-The upgrade sources do **not** enter `sources_hit` — they only inject
-a DOI. Final records instead carry `arxiv_upgraded: true` and
-`arxiv_upgrade_via: "id-lookup" | "title-search"` for audit.
-
-**Metadata merge (higher priority wins per field)**:
-- `title`, `abstract`: Crossref → OpenAlex → PubMed → S2 → arXiv
-- `authors`: Crossref → PubMed → OpenAlex → S2 → arXiv
-- `journal`, `volume`: Crossref → OpenAlex → PubMed
-- `year`: earliest non-empty
-- `citation_count`: `max(S2, OpenAlex)`
-- `is_oa`: OpenAlex authoritative; `null` when no OpenAlex hit
-- `identifiers` (incl. `pmcid`), `sources_hit`: union
+Every search runs three cross-source stages: **dedup** (union-find over
+6 identifiers, no title fuzzy matching), **arXiv upgrade** (resolve
+preprint-only hits to their journal DOI, then re-dedup), and **rank**
+(reciprocal rank fusion, `--sort` overrides to `year:desc` /
+`citations:desc`). Full mechanics — the three upgrade tiers, post-hoc
+DOI verification, and the `arxiv_upgraded` audit fields — live in
+[references/ranking-dedup-upgrade.md](references/ranking-dedup-upgrade.md).
+The per-field metadata merge is in
+[references/output-schema.md](references/output-schema.md).
 
 Missing credentials degrade gracefully — no `polite_email` still hits
 Crossref / PubMed / OpenAlex (unpolite pool), no `s2_api_key` runs S2
-anonymously. Shares env vars with `sf-download`:
-`SCIFORGE_POLITE_EMAIL`, `SCIFORGE_S2_API_KEY`.
+anonymously. Shares `SCIFORGE_POLITE_EMAIL` / `SCIFORGE_S2_API_KEY`
+with `sf-download`; see [references/config.md](references/config.md).
 
 ## When to invoke
 
@@ -204,36 +168,16 @@ exactly — so `sf-search ... | sf-lit add --meta-json -` works for the
 
 ## Agent presentation contract
 
-When an agent (Claude / Codex / another LLM) surfaces `sf-search`
-results to a human in conversation, it MUST follow the three-section
-rendering standard documented in the memory file
-[`sf-search-presentation`](../../memory/sf-search-presentation.md).
+When an agent surfaces `sf-search` results to a human in conversation,
+it MUST follow the four-section rendering standard in
+[references/presentation.md](references/presentation.md) — Section 0
+命令回显+3 行摘要 · Section 1 固定 5 推荐槽(闭集 6-tag 理由) ·
+Section 2 固定 4 分组 · Section 3 完整清单(A 密度,上限 100)。
 
-Summary of the contract (see memory for full detail):
-
-1. **Section 0** — Echo the original CLI command + a 3-line summary of
-   counts, sources hit/failed, dedup shrink, arxiv-upgrade count, OA
-   estimate, and疑似噪声 estimate. Every number comes from the actual
-   NDJSON output.
-2. **Section 1** — **Fixed 5 recommendation slots** (顶级综述 / 奠基
-   里程碑 / 核心方法 / 新兴前沿 / 应用实证), density C (3-4 lines +
-   abstract snippet + reason). Empty slot → `(此查询未见相关论文)`;
-   do NOT force-fill.
-3. **Section 2** — **Fixed 4 groups** with dynamic naming; the agent
-   must print an explicit `📁 分组:...` header. Each group renders its
-   top 5 by RRF order (fewer if the group has <5 records), density B.
-4. **Section 3** — Full list, density A (1 line/paper), default always
-   rendered, hard cap 100 (overflow references `--out FILE`).
-
-Recommendation reasons MUST use the closed 6-tag set
-`[综述] / [里程碑] / [方法核心] / [新方向] / [应用] / [疑似噪声]` and
-give a *refutable* concrete basis — no `必读 / 经典 / 很重要` and
-similar empty praise.
-
-The `--format {ndjson,ids,table,bib,ris}` CLI outputs are **wire
-formats for machines** (or human eyeballing via `table`); the
-presentation contract is orthogonal — it applies whenever an agent
-turns those wire outputs into a chat-facing recap.
+The `--format` outputs are **wire formats** for machines (or human
+eyeballing via `table`); the presentation contract is orthogonal —
+it applies whenever an agent turns those wire outputs into a chat
+recap.
 
 ## MeSH strategy (workflow)
 
@@ -303,33 +247,20 @@ entries) can be diverted to `--out-unresolved FILE`; they never enter
 the main stream. Full spec: [references/citations.md](references/citations.md).
 
 **Agent presentation**: when surfacing `refs` / `cited-by` results in
-conversation, follow the simplified rendering rules in the memory file
-`sf-search-citation-presentation` (Section 0 citation summary + Section 3
-full list — no 5-recommendation, no 4-group section, because a citation
-edge has no relevance rank).
+conversation, follow the simplified rendering rules in
+[references/presentation-citation.md](references/presentation-citation.md)
+(Section 0 citation summary + Section 3 full list — no 5-recommendation,
+no 4-group section, because a citation edge has no relevance rank).
 
-## Sources, per-source limits, concurrency
+## Concurrency & limits
 
 Single-query default: **all 5 sources in parallel, no rate-limit**
-(each source is called 1–2 times). `--sources pubmed,crossref` narrows.
-
-Batch mode (`--from-file`): a **per-source token bucket** serializes
-requests; arXiv's 3-second minimum interval is honored. See
-[references/sources.md](references/sources.md) for exact rates and
-endpoints.
-
-`--per-source-limit N` caps the results pulled from each source before
-dedup (default `top × 2`, capped at 100). For systematic reviews:
-`--top 200 --per-source-limit 500`.
-
-## Configuration
-
-| Env var | Effect | Fallback |
-|---|---|---|
-| `SCIFORGE_POLITE_EMAIL` | Sent as `mailto=` (Crossref, OpenAlex) and User-Agent contact (PubMed) | Unpolite pool |
-| `SCIFORGE_S2_API_KEY` | Semantic Scholar auth (`x-api-key` header) | Anonymous (1 req/s) |
-
-Shared with `sf-download` — set once, both skills pick them up.
+(each source hit 1–2 times). `--sources pubmed,crossref` narrows.
+Batch mode (`--from-file`) uses a per-source token bucket; arXiv's
+3-second minimum is honored. `--per-source-limit N` caps per-source
+recall before dedup (default `top × 2`, capped at 100). Exact rates
+and endpoints: [references/sources.md](references/sources.md);
+env vars and degradation rules: [references/config.md](references/config.md).
 
 ## Exit codes
 
@@ -369,11 +300,14 @@ Follows SciForge ADR-0006:
 
 ## Reference documents
 
-- [references/output-schema.md](references/output-schema.md) — NDJSON wire format
+- [references/output-schema.md](references/output-schema.md) — NDJSON wire format + per-field merge rules
 - [references/query-modes.md](references/query-modes.md) — the four input modes
 - [references/sources.md](references/sources.md) — endpoints, rate limits, query languages
+- [references/ranking-dedup-upgrade.md](references/ranking-dedup-upgrade.md) — RRF, union-find dedup, arXiv upgrade Path A/B/C + post-hoc verification
 - [references/mesh-strategy.md](references/mesh-strategy.md) — MeSH workflow & strategy schema
 - [references/citations.md](references/citations.md) — `refs` / `cited-by` full spec (seed types, coverage matrix, unresolved stream, exit codes)
+- [references/presentation.md](references/presentation.md) — main-search 4-section rendering standard for agents
+- [references/presentation-citation.md](references/presentation-citation.md) — simplified rendering for `refs` / `cited-by`
 - [references/config.md](references/config.md) — env vars, polite email, S2 key
 
 ## Verification
