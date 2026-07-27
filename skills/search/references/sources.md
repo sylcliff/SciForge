@@ -125,6 +125,68 @@ Each adapter can raise `SourceError(source, reason)`. `main.py`:
 Timeouts: **10 s per HTTP call**, no retries. A slow source is a failed
 source (better than blocking the whole search on one straggler).
 
+## Per-source citation-graph endpoints
+
+Used by `sf-search refs <id>` and `sf-search cited-by <id>`. Each
+adapter exposes citation helpers side-by-side with its search entry
+point.
+
+### PubMed — `elink` + `efetch`
+
+- `elink.fcgi?dbfrom=pubmed&db=pubmed&linkname=pubmed_pubmed_refs&id=<pmid>&retmode=json`
+  → outgoing references (PMIDs of papers this one cites)
+- `elink.fcgi?…&linkname=pubmed_pubmed_citedin&id=<pmid>` → incoming
+  citations (PMIDs)
+
+Both `linkname`s only return values when the seed's full text is in
+PubMed Central; a PMID that only has an abstract in PubMed gets an
+empty list. Records are then batch-hydrated via `efetch.fcgi` in chunks
+of 200 (`fetch_by_pmids`).
+
+Rate: same 3 req/s as regular search.
+
+### Crossref — `works/{doi}.reference[]`
+
+- `works/{doi}` → single-work response whose `reference[]` array lists
+  outgoing references. Each entry may carry `DOI`, `article-title`,
+  `author`, `year`, `journal-title`, or only an `unstructured` string.
+
+Entries without a DOI (10-30% typical) are surfaced with
+`raw_citation` and routed to `--out-unresolved`. **Cited-by is not
+covered**: Crossref exposes only an aggregate `is-referenced-by-count`,
+not a citer list (that lives in the Event Data API, out of scope).
+
+### OpenAlex — `works/{id}`, batch, `filter=cites:`
+
+- `works/{id_or_doi}` → seed record whose `referenced_works[]` is a
+  list of OpenAlex work URLs
+- `works?filter=openalex_id:W1|W2|…&per-page=50` → batch-hydrate the
+  bare W-ids (used by both refs and meta-fill)
+- `works?filter=cites:W…&per-page=200&cursor=…` → paginated incoming
+  citations
+
+Cited-by pagination uses cursor navigation up to the caller's
+`--top` or `--all`. Standard 10 req/s polite-pool limit applies.
+
+### Semantic Scholar — `/paper/{id}/{references,citations}`
+
+- `/paper/{id}/references?fields=…&limit=1000&offset=…` → outgoing;
+  wrapped as `{"citedPaper": {...}}` per entry
+- `/paper/{id}/citations?fields=…&limit=1000&offset=…` → incoming;
+  wrapped as `{"citingPaper": {...}}`
+
+`{id}` accepts several prefixes: bare S2 SHA1, `DOI:<doi>`,
+`ARXIV:<id>`, `PMID:<pmid>`, `MAG:<id>`. The orchestrator picks the
+prefix based on the seed's classified kind.
+
+Both endpoints page via a `next` offset; the adapter respects
+`limit=None` (paginate to exhaustion) or a caller-supplied cap.
+
+### arXiv — n/a
+
+The Atom API returns no citation graph. `refs` / `cited-by` skip arXiv
+entirely; `sf-search doctor` reports it as n/a in the coverage matrix.
+
 ## Per-source query compilation
 
 The `query.py` module compiles a normalized `QueryObject`:

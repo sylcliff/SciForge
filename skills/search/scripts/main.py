@@ -16,6 +16,7 @@ import rank
 from config import HTTPError, VERSION, load_config
 from doctor import cmd_doctor
 from mesh import cmd_build, cmd_check, cmd_lookup
+from citations import cmd_refs, cmd_cited_by
 from query import QueryError, build_from_args, build_from_batch_line
 from query_obj import QueryObject
 from sources import ALL_SOURCES, DEFAULT_ORDER
@@ -98,6 +99,40 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
 
     check_p = mesh_sub.add_parser("check", help="espell + esearch count on a strategy")
     check_p.add_argument("strategy_path", help="Path to strategy.json")
+
+    # --- citation-graph subcommands: refs / cited-by ---
+    for verb, help_text, is_cited in [
+        ("refs", "Outgoing references cited by a paper", False),
+        ("cited-by", "Papers that cite the seed paper", True),
+    ]:
+        cp = sub.add_parser(verb, help=help_text)
+        cp.add_argument("seed",
+            help="Seed paper: DOI, PMID, arxiv id, OpenAlex W-id, "
+                 "S2 paper id, or sciforge://literature/<citekey>")
+        cp.add_argument("--top", type=int, default=None,
+            help=("Truncate to top N results (refs default: all; "
+                  "cited-by default: 100)"))
+        if is_cited:
+            cp.add_argument("--all", action="store_true",
+                help="cited-by only: fetch every citer (may be tens of thousands)")
+            cp.add_argument("--sort", default="citations:desc",
+                choices=("citations:desc", "year:desc"),
+                help="cited-by ranking (default citations:desc)")
+        else:
+            cp.set_defaults(all=False, sort="citations:desc")
+        cp.add_argument("--sources",
+            help="Comma-separated subset of openalex,s2,crossref,pubmed "
+                 "(default: all applicable)")
+        cp.add_argument("--no-fetch-meta", action="store_true",
+            help="Skip batch meta-fill for id-only records (faster; "
+                 "records may be missing title/authors)")
+        cp.add_argument("--format", default="ndjson",
+            choices=("ndjson", "ids", "table", "bib", "ris"),
+            help="Output format (default ndjson)")
+        cp.add_argument("--out", default="-", help="Main output path (default stdout)")
+        cp.add_argument("--out-unresolved", default=None,
+            help="Write unresolved-reference records (raw citation strings "
+                 "with no DOI) as NDJSON to PATH. Never mixes into main output.")
 
     return p
 
@@ -323,7 +358,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config()
 
     first = _first_non_flag(argv)
-    if first in ("doctor", "mesh"):
+    if first in ("doctor", "mesh", "refs", "cited-by"):
         parser = _build_subcommand_parser()
         args = parser.parse_args(argv)
         if args.cmd == "doctor":
@@ -335,6 +370,12 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_build(args, cfg)
             if args.mesh_cmd == "check":
                 return cmd_check(args, cfg)
+            parser.error(f"unhandled mesh subcommand: {args.mesh_cmd}")
+            return 2
+        if args.cmd == "refs":
+            return cmd_refs(args, cfg)
+        if args.cmd == "cited-by":
+            return cmd_cited_by(args, cfg)
         parser.error(f"unhandled subcommand: {args.cmd}")
         return 2
 

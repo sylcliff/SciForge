@@ -1,6 +1,6 @@
 ---
 name: search
-description: Use when the user wants to discover papers by topic/keywords/boolean query/MeSH strategy across multiple public academic sources (PubMed, Crossref, arXiv, OpenAlex, Semantic Scholar). Outputs deduped NDJSON that pipes directly into `sf-download` or `sf-lit add`. Also builds MeSH search strategies for PubMed.
+description: Use when the user wants to discover papers by topic/keywords/boolean query/MeSH strategy across multiple public academic sources (PubMed, Crossref, arXiv, OpenAlex, Semantic Scholar), or to list one paper's outgoing references / incoming citations. Outputs deduped NDJSON that pipes directly into `sf-download` or `sf-lit add`. Also builds MeSH search strategies for PubMed.
 ---
 
 # search — API-first multi-source discovery
@@ -16,7 +16,9 @@ PDFs) or `sf-lit add` (catalog without PDFs).
 
 - **In scope**: multi-source keyword / boolean / field / MeSH-strategy
   literature search over PubMed, Crossref, arXiv, OpenAlex, Semantic
-  Scholar; MeSH term lookup and strategy compilation for PubMed.
+  Scholar; MeSH term lookup and strategy compilation for PubMed;
+  **citation-graph queries** — outgoing references and incoming
+  citations for a single paper (see [Citation graph](#citation-graph)).
 - **Out of scope**: PDF fetching (that's `sf-download`), local library
   management (`sf-lit`), citation verification / strict他引 audits /
   citation-file conversion / reference management — those become their
@@ -92,6 +94,8 @@ anonymously. Shares env vars with `sf-download`:
   (`--from-strategy strategy.json`)
 - User wants to **build a MeSH search strategy** for PubMed
   (`sf-search mesh lookup / build / check`)
+- User wants **a paper's outgoing references** (`sf-search refs <id>`)
+  or **incoming citations** (`sf-search cited-by <id>`).
 
 Do **not** invoke this skill for:
 
@@ -126,6 +130,8 @@ Every invocation is one of these:
 | Look up MeSH terms | `scripts/sf-search mesh lookup --concept "diabetes" --concept "heart failure"` |
 | Build a strategy file | `scripts/sf-search mesh build --mesh "Diabetes Mellitus" --synonym diabetes --op AND -o strategy.json` |
 | Sanity-check a strategy | `scripts/sf-search mesh check strategy.json` |
+| One paper's outgoing references | `scripts/sf-search refs <doi\|pmid\|arxiv\|W…\|sciforge://…>` |
+| One paper's incoming citations | `scripts/sf-search cited-by <id> [--top N \| --all] [--sort ...]` |
 | Self-check | `scripts/sf-search doctor` |
 
 The four **query input modes** are mutually exclusive:
@@ -263,6 +269,45 @@ CLI zero-LLM-dependency and reproducible.
 See [references/mesh-strategy.md](references/mesh-strategy.md) for the
 `strategy.json` schema and per-source compilation rules.
 
+## Citation graph
+
+Two sibling subcommands walk the citation graph of one seed paper:
+
+```bash
+scripts/sf-search refs      <id> [--top N] [--out FILE]     # outgoing refs
+scripts/sf-search cited-by  <id> [--top N | --all]          # incoming citations
+                                 [--sort citations:desc|year:desc]
+```
+
+`<id>` may be a DOI, PMID, arxiv id (modern or old-style), OpenAlex
+`W…` id, Semantic Scholar SHA1, or `sciforge://literature/<citekey>`
+(resolved via `sf-lit show --json`).
+
+Coverage summary — set-valued union across sources, no RRF:
+
+| Source | refs | cited-by |
+|---|---|---|
+| OpenAlex | ✓ | ✓ |
+| Semantic Scholar | ✓ | ✓ |
+| Crossref | ✓ (via `reference[]`) | — (Event Data API not covered) |
+| PubMed | PMID + PMC only | PMID + PMC only |
+| arXiv | — | — |
+
+Output records use the same NDJSON shape as main search results
+(so they pipe cleanly into `sf-download --from-file -` and
+`sf-lit add --meta-json -`), with two additions — `direction` and
+`seed` — and three subtractions — `score`, `rank_by_source`,
+`dedup_group` (RRF isn't computed here). Records that only have a
+free-text bibliographic string (unresolved Crossref `reference[]`
+entries) can be diverted to `--out-unresolved FILE`; they never enter
+the main stream. Full spec: [references/citations.md](references/citations.md).
+
+**Agent presentation**: when surfacing `refs` / `cited-by` results in
+conversation, follow the simplified rendering rules in the memory file
+`sf-search-citation-presentation` (Section 0 citation summary + Section 3
+full list — no 5-recommendation, no 4-group section, because a citation
+edge has no relevance rank).
+
 ## Sources, per-source limits, concurrency
 
 Single-query default: **all 5 sources in parallel, no rate-limit**
@@ -328,6 +373,7 @@ Follows SciForge ADR-0006:
 - [references/query-modes.md](references/query-modes.md) — the four input modes
 - [references/sources.md](references/sources.md) — endpoints, rate limits, query languages
 - [references/mesh-strategy.md](references/mesh-strategy.md) — MeSH workflow & strategy schema
+- [references/citations.md](references/citations.md) — `refs` / `cited-by` full spec (seed types, coverage matrix, unresolved stream, exit codes)
 - [references/config.md](references/config.md) — env vars, polite email, S2 key
 
 ## Verification
@@ -337,6 +383,8 @@ scripts/sf-search doctor                                       # per-source reac
 scripts/sf-search "attention is all you need" --top 5          # smoke: transformer paper
 scripts/sf-search --title "attention is all you need" --top 3  # field mode
 scripts/sf-search "topic" --format ids | head -5               # pipe-into-sf-download shape
+scripts/sf-search refs 10.1038/s41586-020-2649-2 --top 5       # citation graph — outgoing
+scripts/sf-search cited-by 1706.03762 --top 5                  # citation graph — incoming
 ```
 
 For the full pipeline:

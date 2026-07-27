@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
 import time
 from typing import Any
@@ -75,6 +77,56 @@ def cmd_doctor(cfg: SearchConfig) -> int:
             print(f"  {src:<16}    ok  ({ms} ms)")
         else:
             print(f"  {src:<16}    fail ({ms} ms) — {reason}")
+
+    print()
+
+    # --- Citation graph support matrix ------------------------------------
+    # Static: driven by which endpoints each adapter exposes today.
+    print("citation graph support:")
+    matrix = [
+        # (source, refs, cited-by, note)
+        ("openalex", "yes",          "yes",         ""),
+        ("s2",       "yes",          "yes",         ""),
+        ("crossref", "yes",          "n/a",         "Event Data API not supported"),
+        ("pubmed",   "PMID + PMC only", "PMID + PMC only",
+                                                    "requires the seed to be a PMID and the paper to be in PubMed Central"),
+        ("arxiv",    "n/a",          "n/a",         "Atom API returns no citation graph"),
+    ]
+    for src, refs, cited, note in matrix:
+        line = f"  {src:<10}  refs: {refs:<18}  cited-by: {cited:<18}"
+        if note:
+            line += f"  ({note})"
+        print(line)
+
+    print()
+
+    # --- sf-lit resolver check --------------------------------------------
+    # Only needed when users pass `sciforge://literature/<key>` seeds.
+    print("sf-lit resolver (needed for sciforge://literature/<key> seeds):")
+    sf_lit = shutil.which("sf-lit")
+    if not sf_lit:
+        print("  sf-lit on PATH:       (not found)  — non-URI seeds still work")
+    else:
+        print(f"  sf-lit on PATH:       {sf_lit}")
+        # Probe: call `sf-lit show __nonexistent-key__ --json`.
+        # Success = exit code 3 with a not-found message. Anything else
+        # signals a schema/library problem worth flagging.
+        try:
+            proc = subprocess.run(  # noqa: S603 — sf_lit resolved via which
+                [sf_lit, "show", "__sf_search_doctor_probe__", "--json"],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            print(f"  sf-lit probe:         fail — {e}")
+        else:
+            if proc.returncode == 3:
+                print("  sf-lit probe:         ok (exit 3 for unknown citekey — expected)")
+            elif proc.returncode == 0:
+                print("  sf-lit probe:         unexpected success (no library init?)")
+            else:
+                # Exit 3 also fires when library isn't init'd. Both non-fatal.
+                stderr = (proc.stderr or "").strip()[:80]
+                print(f"  sf-lit probe:         exit {proc.returncode} — {stderr}")
 
     print()
     if not any_reachable:

@@ -167,17 +167,7 @@ def search(
     if not pmids:
         return []
 
-    efetch_url = build_url(
-        f"{_BASE}/efetch.fcgi",
-        {"db": "pubmed", "id": ",".join(pmids), "retmode": "xml"},
-    )
-    xml_bytes = http_get(
-        efetch_url,
-        source=SOURCE,
-        cfg=cfg,
-        respect_rate_limit=respect_rate_limit,
-    )
-    records = _parse_efetch_xml(xml_bytes)
+    records = fetch_by_pmids(pmids, cfg=cfg, respect_rate_limit=respect_rate_limit)
 
     # Preserve esearch ranking
     out: list[dict[str, Any]] = []
@@ -190,4 +180,109 @@ def search(
     return out
 
 
-__all__ = ["SOURCE", "search"]
+# --------------------------------------------------------------------------- #
+# Citation-graph helpers
+# --------------------------------------------------------------------------- #
+
+
+def fetch_by_pmids(pmids: list[str], *, cfg: SearchConfig,
+                   respect_rate_limit: bool = False,
+                   chunk_size: int = 200) -> dict[str, dict[str, Any]]:
+    """Batch-fetch full records for a list of PMIDs.
+
+    Uses efetch with `retmode=xml`, chunks at `chunk_size` per request.
+    Returns a dict {pmid: record_dict} — same shape as `_parse_efetch_xml`
+    produces. Best-effort — skips chunks that fail.
+    """
+    if not pmids:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for i in range(0, len(pmids), chunk_size):
+        chunk = pmids[i : i + chunk_size]
+        efetch_url = build_url(
+            f"{_BASE}/efetch.fcgi",
+            {"db": "pubmed", "id": ",".join(chunk), "retmode": "xml"},
+        )
+        try:
+            xml_bytes = http_get(
+                efetch_url,
+                source=SOURCE,
+                cfg=cfg,
+                respect_rate_limit=respect_rate_limit,
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        try:
+            records = _parse_efetch_xml(xml_bytes)
+        except Exception:  # noqa: BLE001
+            continue
+        out.update(records)
+    return out
+
+
+def _elink_simple(pmid: str, linkname: str, *, cfg: SearchConfig,
+                  respect_rate_limit: bool = False) -> list[str]:
+    """Run elink with the given `linkname` and return a list of PMIDs.
+
+    E-utilities `elink.fcgi` returns a JSON or XML structure with linked
+    PMIDs. We use `retmode=json` for simplicity.
+
+    An empty list means no links (either the paper has no PMC version or
+    there are no links in the requested direction). Best-effort — never
+    raises.
+    """
+    if not pmid or not pmid.strip():
+        return []
+    url = build_url(
+        f"{_BASE}/elink.fcgi",
+        {
+            "dbfrom": "pubmed",
+            "db": "pubmed",
+            "linkname": linkname,
+            "id": pmid.strip(),
+            "retmode": "json",
+        },
+    )
+    try:
+        data = http_get_json(
+            url, source=SOURCE, cfg=cfg,
+            respect_rate_limit=respect_rate_limit,
+        )
+    except Exception:  # noqa: BLE001
+        return []
+    if not isinstance(data, dict):
+        return []
+    linksets = data.get("linksets") or []
+    if not isinstance(linksets, list) or not linksets:
+        return []
+    for ls in linksets:
+        links = ls.get("linksetdbs") or []
+        for dbl in links:
+            if isinstance(dbl, dict) and dbl.get("linkname") == linkname:
+                return dbl.get("links") or []
+    return []
+
+
+def get_refs_elink(pmid: str, *, cfg: SearchConfig,
+                   respect_rate_limit: bool = False) -> list[str]:
+    """Return PMIDs of papers cited by `pmid`.
+
+    Uses `elink.fcgi?linkname=pubmed_pubmed_refs` — only returns
+    PMIDs when the paper is in PubMed Central. Empty list otherwise.
+    """
+    return _elink_simple(pmid, "pubmed_pubmed_refs", cfg=cfg,
+                         respect_rate_limit=respect_rate_limit)
+
+
+def get_citedin_elink(pmid: str, *, cfg: SearchConfig,
+                      respect_rate_limit: bool = False) -> list[str]:
+    """Return PMIDs of papers that cite `pmid`.
+
+    Uses `elink.fcgi?linkname=pubmed_pubmed_citedin`.
+    """
+    return _elink_simple(pmid, "pubmed_pubmed_citedin", cfg=cfg,
+                         respect_rate_limit=respect_rate_limit)
+
+
+__all__ = ["SOURCE", "search", "fetch_by_pmids",
+           "get_refs_elink", "get_citedin_elink"]

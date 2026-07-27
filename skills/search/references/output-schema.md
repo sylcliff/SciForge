@@ -144,3 +144,46 @@ arXiv:1706.03762
   (parses `identifier` from each line if JSON).
 - `sf-lit add --meta-json -` reads NDJSON, extracts each `meta` object.
 - Zotero / EndNote import `--format bib` / `--format ris` directly.
+
+## Appendix — `refs` / `cited-by` record shape
+
+Citation-graph subcommands (`sf-search refs <id>` and
+`sf-search cited-by <id>`) emit the same NDJSON wire format with three
+differences from the main search line:
+
+**Added fields**:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `direction` | `"refs"` \| `"cited-by"` | Which subcommand produced this record |
+| `seed` | str | The seed identifier, as normalized by the classifier (DOI lowercased, arxiv id stripped of trailing vN, etc.) |
+| `raw_citation` (unresolved-only) | str \| null | Present only on records that lack every identifier. Free-text bibliographic string as reported by Crossref |
+
+**Removed fields**: `score`, `rank_by_source`, `dedup_group`,
+`arxiv_upgraded` — RRF and multi-tier arxiv upgrade don't apply to
+citation-graph queries (a citation is a boolean edge, not a relevance
+score). `sources_hit`, `meta`, and `identifier` are unchanged.
+
+**Streams**: the main NDJSON stream only contains resolved records (all
+have an `identifier`). Passing `--out-unresolved PATH` writes a second
+NDJSON stream — one line per Crossref `reference[]` entry that had no
+DOI — containing `raw_citation` plus whatever partial metadata Crossref
+provided. Unresolved records never appear in `--format bib` / `ris` /
+`ids` (all three require an identifier).
+
+**Summary**: the trailing `{"summary": {...}}` line uses a different key
+set:
+
+```jsonc
+{"summary": {
+  "seed": "10.1038/s41586-020-2649-2",
+  "seed_kind": "doi",
+  "direction": "refs",
+  "resolved": 34,
+  "unresolved": 2,
+  "sources_ok":     {"openalex": 34, "s2": 30, "crossref": 32, "pubmed": 0},
+  "sources_failed": {}
+}}
+```
+
+See [citations.md](citations.md) for the full spec.

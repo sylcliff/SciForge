@@ -140,4 +140,148 @@ def lookup_by_arxiv(arxiv_id: str, *, cfg: SearchConfig,
     return _parse_item(item)
 
 
-__all__ = ["SOURCE", "search", "lookup_by_arxiv"]
+__all__ = ["SOURCE", "search", "lookup_by_arxiv", "get_references", "get_citations"]
+
+
+# --------------------------------------------------------------------------- #
+# Citation-graph endpoints
+# --------------------------------------------------------------------------- #
+
+
+def _resolve_seed_id(seed_id: str, seed_kind: str) -> str:
+    """Build the S2 paper-id string that `/paper/{id}/…` accepts.
+
+    S2 recognizes: `<paperId>` (SHA1), `DOI:<doi>`, `ARXIV:<id>`,
+    `PMID:<pmid>`, `MAG:<id>`, `URL:<url>`.
+    """
+    seed_kind = seed_kind.lower()
+    if seed_kind == "doi":
+        return f"DOI:{seed_id}"
+    if seed_kind == "arxiv":
+        return f"ARXIV:{seed_id}"
+    if seed_kind == "pmid":
+        return f"PMID:{seed_id}"
+    if seed_kind == "s2":
+        return seed_id  # bare paperId
+    # openalex — S2 doesn't accept it, caller must have resolved to another kind
+    raise ValueError(f"S2 does not accept seed_kind={seed_kind!r}")
+
+
+# Fields for /references and /citations — nested under `citedPaper`/`citingPaper`
+_GRAPH_FIELDS = ",".join([
+    "title", "authors", "year", "citationCount", "externalIds",
+    "abstract", "venue", "url", "publicationTypes",
+])
+
+
+def _parse_graph_item(paper: dict[str, Any]) -> dict[str, Any] | None:
+    """Parse the `citedPaper` / `citingPaper` sub-object into a record.
+
+    S2's references/citations endpoints wrap each result: for /references
+    each item looks like `{"citedPaper": {...}}` and for /citations
+    `{"citingPaper": {...}}`. Caller unwraps and passes the inner dict.
+    """
+    if not isinstance(paper, dict):
+        return None
+    return _parse_item(paper)
+
+
+def get_references(seed_id: str, seed_kind: str, *, cfg: SearchConfig,
+                   respect_rate_limit: bool = False,
+                   limit: int | None = None) -> list[dict[str, Any]]:
+    """Fetch outgoing references cited by the paper `seed_id`.
+
+    `seed_kind` picks the S2 ID prefix (doi / arxiv / pmid / s2). If
+    `limit` is None, pages to exhaustion (S2 caps offset+limit at 10000).
+
+    Best-effort — returns [] on any failure.
+    """
+    try:
+        sid = _resolve_seed_id(seed_id, seed_kind)
+    except ValueError:
+        return []
+
+    out: list[dict[str, Any]] = []
+    offset = 0
+    page = 1000
+    while True:
+        params: dict[str, Any] = {
+            "fields": _GRAPH_FIELDS,
+            "limit": page if limit is None else min(page, max(1, limit - len(out))),
+            "offset": offset,
+        }
+        url = build_url(f"{_LOOKUP_BASE}/{sid}/references", params)
+        try:
+            data = http_get_json(
+                url, source=SOURCE, cfg=cfg,
+                respect_rate_limit=respect_rate_limit,
+            )
+        except Exception:  # noqa: BLE001
+            break
+        if not isinstance(data, dict):
+            break
+        items = data.get("data") or []
+        if not items:
+            break
+        for w in items:
+            if not isinstance(w, dict):
+                continue
+            inner = w.get("citedPaper") if "citedPaper" in w else w
+            rec = _parse_graph_item(inner)
+            if rec is not None:
+                out.append(rec)
+            if limit is not None and len(out) >= limit:
+                return out
+        # S2 exposes `next` in the response for pagination
+        next_offset = data.get("next")
+        if next_offset is None or next_offset == offset:
+            break
+        offset = next_offset
+    return out
+
+
+def get_citations(seed_id: str, seed_kind: str, *, cfg: SearchConfig,
+                  respect_rate_limit: bool = False,
+                  limit: int | None = None) -> list[dict[str, Any]]:
+    """Fetch papers that cite the paper `seed_id`. Mirrors `get_references`."""
+    try:
+        sid = _resolve_seed_id(seed_id, seed_kind)
+    except ValueError:
+        return []
+
+    out: list[dict[str, Any]] = []
+    offset = 0
+    page = 1000
+    while True:
+        params: dict[str, Any] = {
+            "fields": _GRAPH_FIELDS,
+            "limit": page if limit is None else min(page, max(1, limit - len(out))),
+            "offset": offset,
+        }
+        url = build_url(f"{_LOOKUP_BASE}/{sid}/citations", params)
+        try:
+            data = http_get_json(
+                url, source=SOURCE, cfg=cfg,
+                respect_rate_limit=respect_rate_limit,
+            )
+        except Exception:  # noqa: BLE001
+            break
+        if not isinstance(data, dict):
+            break
+        items = data.get("data") or []
+        if not items:
+            break
+        for w in items:
+            if not isinstance(w, dict):
+                continue
+            inner = w.get("citingPaper") if "citingPaper" in w else w
+            rec = _parse_graph_item(inner)
+            if rec is not None:
+                out.append(rec)
+            if limit is not None and len(out) >= limit:
+                return out
+        next_offset = data.get("next")
+        if next_offset is None or next_offset == offset:
+            break
+        offset = next_offset
+    return out
